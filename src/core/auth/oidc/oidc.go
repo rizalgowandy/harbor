@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package oidc
 
 import (
@@ -16,7 +30,7 @@ type Auth struct {
 }
 
 // SearchGroup is skipped in OIDC mode, so it makes sure any group will be onboarded.
-func (a *Auth) SearchGroup(ctx context.Context, groupKey string) (*model.UserGroup, error) {
+func (a *Auth) SearchGroup(_ context.Context, groupKey string) (*model.UserGroup, error) {
 	return &model.UserGroup{
 		GroupName: groupKey,
 		GroupType: common.OIDCGroupType,
@@ -24,7 +38,7 @@ func (a *Auth) SearchGroup(ctx context.Context, groupKey string) (*model.UserGro
 }
 
 // OnBoardGroup create user group entity in Harbor DB, altGroupName is not used.
-func (a *Auth) OnBoardGroup(ctx context.Context, u *model.UserGroup, altGroupName string) error {
+func (a *Auth) OnBoardGroup(ctx context.Context, u *model.UserGroup, _ string) error {
 	// if group name provided, on board the user group
 	if len(u.GroupName) == 0 || u.GroupType != common.OIDCGroupType {
 		return fmt.Errorf("invalid input group for OIDC mode: %v", *u)

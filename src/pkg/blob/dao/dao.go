@@ -17,11 +17,12 @@ package dao
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/goharbor/harbor/src/lib/log"
 	"time"
 
 	"github.com/docker/distribution/manifest/schema2"
+
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/blob/models"
@@ -384,7 +385,7 @@ func (d *dao) DeleteBlob(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("blob %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("blob %d not found", id)
 	}
 	return nil
 }

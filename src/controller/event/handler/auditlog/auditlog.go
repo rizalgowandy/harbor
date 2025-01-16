@@ -16,6 +16,7 @@ package auditlog
 
 import (
 	"context"
+
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -44,7 +45,8 @@ func (h *Handler) Handle(ctx context.Context, value interface{}) error {
 	switch v := value.(type) {
 	case *event.PushArtifactEvent, *event.DeleteArtifactEvent,
 		*event.DeleteRepositoryEvent, *event.CreateProjectEvent, *event.DeleteProjectEvent,
-		*event.DeleteTagEvent, *event.CreateTagEvent:
+		*event.DeleteTagEvent, *event.CreateTagEvent,
+		*event.CreateRobotEvent, *event.DeleteRobotEvent:
 		addAuditLog = true
 	case *event.PullArtifactEvent:
 		addAuditLog = !config.PullAuditLogDisable(ctx)

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/docker/distribution/registry/auth/token"
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +15,7 @@ func TestValid(t *testing.T) {
 	}{
 		{
 			claims: Claims{
-				StandardClaims: jwt.StandardClaims{
+				RegisteredClaims: jwt.RegisteredClaims{
 					Issuer: "anonymous",
 				},
 				Access: []*token.ResourceActions{},
@@ -24,7 +24,7 @@ func TestValid(t *testing.T) {
 		},
 		{
 			claims: Claims{
-				StandardClaims: jwt.StandardClaims{
+				RegisteredClaims: jwt.RegisteredClaims{
 					Issuer: Issuer,
 				},
 				Access: []*token.ResourceActions{},

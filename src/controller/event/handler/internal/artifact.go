@@ -24,13 +24,22 @@ import (
 	"time"
 
 	"github.com/goharbor/harbor/src/controller/artifact"
+	sbomprocessor "github.com/goharbor/harbor/src/controller/artifact/processor/sbom"
 	"github.com/goharbor/harbor/src/controller/event"
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/repository"
 	"github.com/goharbor/harbor/src/controller/tag"
+	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
+	pkgArt "github.com/goharbor/harbor/src/pkg/artifact"
+	"github.com/goharbor/harbor/src/pkg/scan/report"
+	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
+	"github.com/goharbor/harbor/src/pkg/scan/sbom"
+	"github.com/goharbor/harbor/src/pkg/task"
 )
 
 const (
@@ -60,8 +69,17 @@ func init() {
 	}
 }
 
-// Handler preprocess artifact event data
-type Handler struct {
+// ArtifactEventHandler preprocess artifact event data
+type ArtifactEventHandler struct {
+	// execMgr for managing executions
+	execMgr task.ExecutionManager
+	// reportMgr for managing scan reports
+	reportMgr report.Manager
+	// sbomReportMgr
+	sbomReportMgr sbom.Manager
+	// artMgr for managing artifacts
+	artMgr pkgArt.Manager
+
 	once sync.Once
 	// pullCountStore caches the pull count group by repository
 	// map[repositoryID]counts
@@ -76,17 +94,19 @@ type Handler struct {
 }
 
 // Name ...
-func (a *Handler) Name() string {
+func (a *ArtifactEventHandler) Name() string {
 	return "InternalArtifact"
 }
 
 // Handle ...
-func (a *Handler) Handle(ctx context.Context, value interface{}) error {
+func (a *ArtifactEventHandler) Handle(ctx context.Context, value interface{}) error {
 	switch v := value.(type) {
 	case *event.PullArtifactEvent:
 		return a.onPull(ctx, v.ArtifactEvent)
 	case *event.PushArtifactEvent:
 		return a.onPush(ctx, v.ArtifactEvent)
+	case *event.DeleteArtifactEvent:
+		return a.onDelete(ctx, v.ArtifactEvent)
 	default:
 		log.Errorf("Can not handler this event type! %#v", v)
 	}
@@ -94,11 +114,14 @@ func (a *Handler) Handle(ctx context.Context, value interface{}) error {
 }
 
 // IsStateful ...
-func (a *Handler) IsStateful() bool {
+func (a *ArtifactEventHandler) IsStateful() bool {
 	return false
 }
 
-func (a *Handler) onPull(ctx context.Context, event *event.ArtifactEvent) error {
+func (a *ArtifactEventHandler) onPull(ctx context.Context, event *event.ArtifactEvent) error {
+	if config.ScannerSkipUpdatePullTime(ctx) && isScannerUser(ctx, event) {
+		return nil
+	}
 	// if duration is equal to 0 or negative, keep original sync mode.
 	if asyncFlushDuration <= 0 {
 		var tagName string
@@ -141,7 +164,7 @@ func (a *Handler) onPull(ctx context.Context, event *event.ArtifactEvent) error 
 	return nil
 }
 
-func (a *Handler) updatePullTimeInCache(ctx context.Context, event *event.ArtifactEvent) {
+func (a *ArtifactEventHandler) updatePullTimeInCache(_ context.Context, event *event.ArtifactEvent) {
 	var tagName string
 	if len(event.Tags) != 0 {
 		tagName = event.Tags[0]
@@ -155,14 +178,14 @@ func (a *Handler) updatePullTimeInCache(ctx context.Context, event *event.Artifa
 	a.pullTimeStore[key] = time.Now()
 }
 
-func (a *Handler) addPullCountInCache(ctx context.Context, event *event.ArtifactEvent) {
+func (a *ArtifactEventHandler) addPullCountInCache(_ context.Context, event *event.ArtifactEvent) {
 	a.pullCountLock.Lock()
 	defer a.pullCountLock.Unlock()
 
 	a.pullCountStore[event.Artifact.RepositoryID] = a.pullCountStore[event.Artifact.RepositoryID] + 1
 }
 
-func (a *Handler) syncFlushPullTime(ctx context.Context, artifactID int64, tagName string, time time.Time) {
+func (a *ArtifactEventHandler) syncFlushPullTime(ctx context.Context, artifactID int64, tagName string, time time.Time) {
 	var tagID int64
 
 	if tagName != "" {
@@ -185,13 +208,13 @@ func (a *Handler) syncFlushPullTime(ctx context.Context, artifactID int64, tagNa
 	}
 }
 
-func (a *Handler) syncFlushPullCount(ctx context.Context, repositoryID int64, count uint64) {
+func (a *ArtifactEventHandler) syncFlushPullCount(ctx context.Context, repositoryID int64, count uint64) {
 	if err := repository.Ctl.AddPullCount(ctx, repositoryID, count); err != nil {
 		log.Warningf("failed to add pull count repository %d, %v", repositoryID, err)
 	}
 }
 
-func (a *Handler) asyncFlushPullTime(ctx context.Context) {
+func (a *ArtifactEventHandler) asyncFlushPullTime(ctx context.Context) {
 	for {
 		<-time.After(asyncFlushDuration)
 		a.pullTimeLock.Lock()
@@ -217,7 +240,7 @@ func (a *Handler) asyncFlushPullTime(ctx context.Context) {
 	}
 }
 
-func (a *Handler) asyncFlushPullCount(ctx context.Context) {
+func (a *ArtifactEventHandler) asyncFlushPullCount(ctx context.Context) {
 	for {
 		<-time.After(asyncFlushDuration)
 		a.pullCountLock.Lock()
@@ -231,12 +254,106 @@ func (a *Handler) asyncFlushPullCount(ctx context.Context) {
 	}
 }
 
-func (a *Handler) onPush(ctx context.Context, event *event.ArtifactEvent) error {
+func (a *ArtifactEventHandler) onPush(ctx context.Context, event *event.ArtifactEvent) error {
 	go func() {
+		if event.Operator != "" {
+			ctx = context.WithValue(ctx, operator.ContextKey{}, event.Operator)
+		}
+
 		if err := autoScan(ctx, &artifact.Artifact{Artifact: *event.Artifact}, event.Tags...); err != nil {
 			log.Errorf("scan artifact %s@%s failed, error: %v", event.Artifact.RepositoryName, event.Artifact.Digest, err)
+		}
+
+		log.Debugf("auto generate sbom is triggered for artifact event %+v", event)
+		if err := autoGenSBOM(ctx, &artifact.Artifact{Artifact: *event.Artifact}); err != nil {
+			log.Errorf("generate sbom for artifact %s@%s failed, error: %v", event.Artifact.RepositoryName, event.Artifact.Digest, err)
 		}
 	}()
 
 	return nil
+}
+
+func (a *ArtifactEventHandler) onDelete(ctx context.Context, event *event.ArtifactEvent) error {
+	execMgr := task.ExecMgr
+	reportMgr := report.Mgr
+	artMgr := pkg.ArtifactMgr
+	// for UT mock
+	if a.execMgr != nil {
+		execMgr = a.execMgr
+	}
+	if a.reportMgr != nil {
+		reportMgr = a.reportMgr
+	}
+	if a.artMgr != nil {
+		artMgr = a.artMgr
+	}
+
+	ids := []int64{event.Artifact.ID}
+	digests := []string{event.Artifact.Digest}
+	if len(event.Artifact.References) > 0 {
+		for _, ref := range event.Artifact.References {
+			ids = append(ids, ref.ChildID)
+			digests = append(digests, ref.ChildDigest)
+		}
+	}
+	// check if the digest also referenced by other artifacts, should exclude it to delete the scan report if still referenced by others.
+	unrefDigests := []string{}
+	for _, digest := range digests {
+		// with the base=* to query all artifacts includes untagged and references
+		count, err := artMgr.Count(ctx, q.New(q.KeyWords{"digest": digest, "base": "*"}))
+		if err != nil {
+			log.Errorf("failed to count the artifact with the digest %s, error: %v", digest, err)
+			continue
+		}
+
+		if count == 0 {
+			unrefDigests = append(unrefDigests, digest)
+		}
+	}
+	// clean up the scan executions of this artifact and it's references by id
+	log.Debugf("delete the associated scan executions of artifacts %v as the artifacts have been deleted", ids)
+	for _, id := range ids {
+		if err := execMgr.DeleteByVendor(ctx, job.ImageScanJobVendorType, id); err != nil {
+			log.Errorf("failed to delete scan executions of artifact %d, error: %v", id, err)
+		}
+	}
+
+	// clean up the scan reports of this artifact and it's references by digest
+	log.Debugf("delete the associated scan reports of artifacts %v as the artifacts have been deleted", unrefDigests)
+	if err := reportMgr.DeleteByDigests(ctx, unrefDigests...); err != nil {
+		log.Errorf("failed to delete scan reports of artifact %v, error: %v", unrefDigests, err)
+	}
+
+	// delete sbom_report when the subject artifact is deleted
+	if err := sbom.Mgr.DeleteByArtifactID(ctx, event.Artifact.ID); err != nil {
+		log.Errorf("failed to delete sbom reports of artifact ID %v, error: %v", event.Artifact.ID, err)
+	}
+
+	// delete sbom_report when the accessory artifact is deleted
+	if event.Artifact.Type == sbomprocessor.ArtifactTypeSBOM && len(event.Artifact.Digest) > 0 {
+		if err := sbom.Mgr.DeleteByExtraAttr(ctx, v1.MimeTypeSBOMReport, "sbom_digest", event.Artifact.Digest); err != nil {
+			log.Errorf("failed to delete sbom reports of with sbom digest %v, error: %v", event.Artifact.Digest, err)
+		}
+	}
+	return nil
+}
+
+// isScannerUser check if the current user is a scanner user by its prefix
+// usually a scanner user should be named like `robot$<projectName>+<Scanner UUID (8byte)>-<Scanner Name>-<UUID>`
+// verify it by the prefix `robot$<projectName>+<Scanner UUID (8byte)>`
+func isScannerUser(ctx context.Context, event *event.ArtifactEvent) bool {
+	if len(event.Operator) == 0 {
+		return false
+	}
+	robotPrefix := config.RobotPrefix(ctx)
+	scannerPrefix := config.ScannerRobotPrefix(ctx)
+	prefix := fmt.Sprintf("%s%s+%s", robotPrefix, parseProjectName(event.Repository), scannerPrefix)
+	return strings.HasPrefix(event.Operator, prefix)
+}
+
+func parseProjectName(repoName string) string {
+	if strings.Contains(repoName, "/") {
+		return strings.Split(repoName, "/")[0]
+	}
+	return ""
 }

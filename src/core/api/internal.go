@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@ package api
 import (
 	"context"
 
-	"github.com/goharbor/harbor/src/lib/config"
+	o "github.com/beego/beego/v2/client/orm"
 
-	o "github.com/astaxie/beego/orm"
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/quota"
 	"github.com/goharbor/harbor/src/controller/user"
 	"github.com/goharbor/harbor/src/core/auth"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
@@ -66,7 +66,10 @@ func (ia *InternalAPI) RenameAdmin() {
 		return
 	}
 	log.Debugf("The super user has been renamed to: %s", newName)
-	ia.DestroySession()
+	if err := ia.DestroySession(); err != nil {
+		log.Errorf("failed to destroy session for admin user, error: %v", err)
+		return
+	}
 }
 
 // SyncQuota ...
@@ -80,14 +83,20 @@ func (ia *InternalAPI) SyncQuota() {
 	cfgMgr := config.GetCfgManager(ctx)
 	if !cur {
 		cfgMgr.Set(ctx, common.ReadOnly, true)
-		cfgMgr.Save(ctx)
+		err := cfgMgr.Save(ctx)
+		if err != nil {
+			log.Warningf("failed to save context into config manager, error: %v", err)
+		}
 	}
 	// For api call, to avoid the timeout, it should be asynchronous
 	go func() {
 		defer func() {
 			ctx := orm.Context()
 			cfgMgr.Set(ctx, common.ReadOnly, cur)
-			cfgMgr.Save(ctx)
+			err := cfgMgr.Save(ctx)
+			if err != nil {
+				log.Warningf("failed to save context into config manager asynchronously, error: %v", err)
+			}
 		}()
 		log.Info("start to sync quota(API), the system will be set to ReadOnly and back it normal once it done.")
 		ctx := orm.NewContext(context.TODO(), o.NewOrm())
@@ -98,5 +107,4 @@ func (ia *InternalAPI) SyncQuota() {
 		}
 		log.Info("success to sync quota(API).")
 	}()
-	return
 }

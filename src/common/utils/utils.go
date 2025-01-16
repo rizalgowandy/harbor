@@ -27,6 +27,8 @@ import (
 	"strings"
 	"time"
 
+	cronlib "github.com/robfig/cron/v3"
+
 	"github.com/goharbor/harbor/src/lib/log"
 )
 
@@ -87,7 +89,7 @@ func GenerateRandomString() string {
 // TestTCPConn tests TCP connection
 // timeout: the total time before returning if something is wrong
 // with the connection, in second
-// interval: the interval time for retring after failure, in second
+// interval: the interval time for retrying after failure, in second
 func TestTCPConn(addr string, timeout, interval int) error {
 	success := make(chan int, 1)
 	cancel := make(chan int, 1)
@@ -174,7 +176,7 @@ func ParseProjectIDOrName(value interface{}) (int64, string, error) {
 	return id, name, nil
 }
 
-// SafeCastString -- cast a object to string saftely
+// SafeCastString -- cast an object to string safely
 func SafeCastString(value interface{}) string {
 	if result, ok := value.(string); ok {
 		return result
@@ -245,23 +247,13 @@ func IsIllegalLength(s string, min int, max int) bool {
 	return (len(s) < min || len(s) > max)
 }
 
-// IsContainIllegalChar ...
-func IsContainIllegalChar(s string, illegalChar []string) bool {
-	for _, c := range illegalChar {
-		if strings.Index(s, c) >= 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // ParseJSONInt ...
 func ParseJSONInt(value interface{}) (int, bool) {
-	switch value.(type) {
+	switch v := value.(type) {
 	case float64:
-		return int(value.(float64)), true
+		return int(v), true
 	case int:
-		return value.(int), true
+		return v, true
 	default:
 		return 0, false
 	}
@@ -276,4 +268,82 @@ func FindNamedMatches(regex *regexp.Regexp, str string) map[string]string {
 		results[regex.SubexpNames()[i]] = name
 	}
 	return results
+}
+
+// NextSchedule return next scheduled time with a cron string and current time provided
+// the cron string could contain 6 tokens
+// if the cron string is invalid, it returns a zero time
+func NextSchedule(cron string, curTime time.Time) time.Time {
+	if len(cron) == 0 {
+		return time.Time{}
+	}
+	cr := strings.TrimSpace(cron)
+	s, err := CronParser().Parse(cr)
+	if err != nil {
+		log.Debugf("the cron string %v is invalid, error: %v", cron, err)
+		return time.Time{}
+	}
+	return s.Next(curTime)
+}
+
+// CronParser returns the parser of cron string with format of "* * * * * *"
+func CronParser() cronlib.Parser {
+	return cronlib.NewParser(cronlib.Second | cronlib.Minute | cronlib.Hour | cronlib.Dom | cronlib.Month | cronlib.Dow)
+}
+
+// ValidateCronString check whether it is a valid cron string and whether the 1st field (indicating Seconds of time) of the cron string is a fixed value of 0 or not
+func ValidateCronString(cron string) error {
+	if len(cron) == 0 {
+		return fmt.Errorf("empty cron string is invalid")
+	}
+	_, err := CronParser().Parse(cron)
+	if err != nil {
+		return err
+	}
+	cronParts := strings.Split(cron, " ")
+	if len(cronParts) == 6 && cronParts[0] != "0" {
+		return fmt.Errorf("the 1st field (indicating Seconds of time) of the cron setting must be 0")
+	}
+	return nil
+}
+
+// MostMatchSorter is a sorter for the most match, usually invoked in sort Less function
+// usage:
+//
+//	sort.Slice(input, func(i, j int) bool {
+//		return MostMatchSorter(input[i].GroupName, input[j].GroupName, matchWord)
+//	})
+//
+// a is the field to be used for sorting, b is the other field, matchWord is the word to be matched
+// the return value is true if a is less than b
+// for example, search with "user",  input is {"harbor_user", "user", "users, "admin_user"}
+// it returns with this order {"user", "users", "admin_user", "harbor_user"}
+func MostMatchSorter(a, b string, matchWord string) bool {
+	// exact match always first
+	if a == matchWord {
+		return true
+	}
+	if b == matchWord {
+		return false
+	}
+	// sort by length, then sort by alphabet
+	if len(a) == len(b) {
+		return a < b
+	}
+	return len(a) < len(b)
+}
+
+// IsLocalPath checks if path is local, includes the empty path
+func IsLocalPath(path string) bool {
+	return len(path) == 0 || (strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//"))
+}
+
+// StringInSlice check if the string is in the slice
+func StringInSlice(str string, slice []string) bool {
+	for _, s := range slice {
+		if s == str {
+			return true
+		}
+	}
+	return false
 }

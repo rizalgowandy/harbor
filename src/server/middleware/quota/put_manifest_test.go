@@ -17,22 +17,23 @@ package quota
 import (
 	"context"
 	std_err "errors"
-	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/docker/distribution/manifest/schema2"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/blob/models"
 	"github.com/goharbor/harbor/src/pkg/distribution"
 	"github.com/goharbor/harbor/src/pkg/notification"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 	"github.com/goharbor/harbor/src/testing/mock"
 	distributiontesting "github.com/goharbor/harbor/src/testing/pkg/distribution"
-	"github.com/stretchr/testify/suite"
 )
 
 type PutManifestMiddlewareTestSuite struct {
@@ -212,7 +213,7 @@ func (suite *PutManifestMiddlewareTestSuite) TestResourcesExceeded() {
 		var errs quota.Errors
 		errs = errs.Add(quota.NewResourceOverflowError(types.ResourceStorage, 100, 100, 110))
 
-		err := errors.DeniedError(errs).WithMessage("Quota exceeded when processing the request of %v", errs)
+		err := errors.DeniedError(errs).WithMessagef("Quota exceeded when processing the request of %v", errs)
 		mock.OnAnything(suite.quotaController, "Request").Return(err).Once()
 
 		req := httptest.NewRequest(http.MethodPut, "/v2/library/photon/manifests/2.0", nil)

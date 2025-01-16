@@ -40,7 +40,7 @@ func (s *regexpStore) Get(key string, build func(string) *regexp.Regexp) *regexp
 
 func (s *regexpStore) Purge() {
 	var keys []interface{}
-	s.entries.Range(func(key, value interface{}) bool {
+	s.entries.Range(func(key, _ interface{}) bool {
 		keys = append(keys, key)
 		return true
 	})
@@ -60,7 +60,7 @@ func init() {
 
 func startRegexpStorePurging(s *regexpStore, intervalDuration time.Duration) {
 	go func() {
-		rand.Seed(time.Now().Unix())
+		rand.NewSource(time.Now().UnixNano())
 		jitter := time.Duration(rand.Int()%60) * time.Minute
 		log.Debugf("Starting regexp store purge in %s", jitter)
 		time.Sleep(jitter)

@@ -15,13 +15,18 @@
 package accessory
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/accessory/dao"
 	"github.com/goharbor/harbor/src/pkg/accessory/model"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/base"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/cosign"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/nydus"
 	"github.com/goharbor/harbor/src/testing/mock"
 	testingdao "github.com/goharbor/harbor/src/testing/pkg/accessory/dao"
-	"github.com/stretchr/testify/suite"
-	"testing"
 )
 
 type managerTestSuite struct {
@@ -40,7 +45,7 @@ func (m *managerTestSuite) SetupTest() {
 func (m *managerTestSuite) TestEnsure() {
 	mock.OnAnything(m.dao, "List").Return([]*dao.Accessory{}, nil)
 	mock.OnAnything(m.dao, "Create").Return(int64(1), nil)
-	err := m.mgr.Ensure(nil, int64(1), int64(1), int64(1), "sha256:1234", model.TypeCosignSignature)
+	err := m.mgr.Ensure(nil, string(""), string(""), int64(1), int64(2), int64(1), "sha256:1234", model.TypeCosignSignature)
 	m.Require().Nil(err)
 }
 
@@ -77,6 +82,16 @@ func (m *managerTestSuite) TestCreate() {
 		ArtifactID: 1,
 		Size:       1,
 		Type:       model.TypeCosignSignature,
+	})
+	m.Require().Nil(err)
+	m.dao.AssertExpectations(m.T())
+}
+
+func (m *managerTestSuite) TestUpdate() {
+	mock.OnAnything(m.dao, "Update").Return(nil)
+	err := m.mgr.Update(nil, model.AccessoryData{
+		ID:            1,
+		SubArtifactID: 2,
 	})
 	m.Require().Nil(err)
 	m.dao.AssertExpectations(m.T())

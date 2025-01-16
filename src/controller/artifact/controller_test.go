@@ -19,6 +19,10 @@ import (
 	"testing"
 	"time"
 
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/controller/artifact/processor/chart"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/cnab"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/image"
@@ -31,12 +35,12 @@ import (
 	accessorymodel "github.com/goharbor/harbor/src/pkg/accessory/model"
 	basemodel "github.com/goharbor/harbor/src/pkg/accessory/model/base"
 	"github.com/goharbor/harbor/src/pkg/artifact"
+	"github.com/goharbor/harbor/src/pkg/blob/models"
 	"github.com/goharbor/harbor/src/pkg/label/model"
 	repomodel "github.com/goharbor/harbor/src/pkg/repository/model"
 	model_tag "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 	tagtesting "github.com/goharbor/harbor/src/testing/controller/tag"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
-	"github.com/goharbor/harbor/src/testing/pkg/accessory"
 	accessorytesting "github.com/goharbor/harbor/src/testing/pkg/accessory"
 	arttesting "github.com/goharbor/harbor/src/testing/pkg/artifact"
 	artrashtesting "github.com/goharbor/harbor/src/testing/pkg/artifactrash"
@@ -45,9 +49,6 @@ import (
 	"github.com/goharbor/harbor/src/testing/pkg/label"
 	"github.com/goharbor/harbor/src/testing/pkg/registry"
 	repotesting "github.com/goharbor/harbor/src/testing/pkg/repository"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 // TODO find another way to test artifact controller, it's hard to maintain currently
@@ -66,27 +67,27 @@ type controllerTestSuite struct {
 	ctl          *controller
 	repoMgr      *repotesting.Manager
 	artMgr       *arttesting.Manager
-	artrashMgr   *artrashtesting.FakeManager
+	artrashMgr   *artrashtesting.Manager
 	blobMgr      *blob.Manager
 	tagCtl       *tagtesting.FakeController
 	labelMgr     *label.Manager
 	abstractor   *fakeAbstractor
 	immutableMtr *immutable.FakeMatcher
-	regCli       *registry.FakeClient
-	accMgr       *accessory.Manager
+	regCli       *registry.Client
+	accMgr       *accessorytesting.Manager
 }
 
 func (c *controllerTestSuite) SetupTest() {
 	c.repoMgr = &repotesting.Manager{}
 	c.artMgr = &arttesting.Manager{}
-	c.artrashMgr = &artrashtesting.FakeManager{}
+	c.artrashMgr = &artrashtesting.Manager{}
 	c.blobMgr = &blob.Manager{}
 	c.tagCtl = &tagtesting.FakeController{}
 	c.labelMgr = &label.Manager{}
 	c.abstractor = &fakeAbstractor{}
 	c.immutableMtr = &immutable.FakeMatcher{}
 	c.accMgr = &accessorytesting.Manager{}
-	c.regCli = &registry.FakeClient{}
+	c.regCli = &registry.Client{}
 	c.ctl = &controller{
 		repoMgr:      c.repoMgr,
 		artMgr:       c.artMgr,
@@ -136,10 +137,10 @@ func (c *controllerTestSuite) TestAssembleArtifact() {
 	}, nil)
 	acc := &basemodel.Default{
 		Data: accessorymodel.AccessoryData{
-			ID:            1,
-			ArtifactID:    2,
-			SubArtifactID: 1,
-			Type:          accessorymodel.TypeCosignSignature,
+			ID:                1,
+			ArtifactID:        2,
+			SubArtifactDigest: "sha256:123",
+			Type:              accessorymodel.TypeCosignSignature,
 		},
 	}
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{
@@ -237,6 +238,21 @@ func (c *controllerTestSuite) TestEnsureArtifact() {
 	c.Require().Nil(err)
 	c.True(created)
 	c.Equal(int64(1), art.ID)
+
+	// reset the mock
+	c.SetupTest()
+
+	// the artifact doesn't exist and get a conflict error on creating the artifact and fail to get again
+	c.repoMgr.On("GetByName", mock.Anything, mock.Anything).Return(&repomodel.RepoRecord{
+		ProjectID: 1,
+	}, nil)
+	c.artMgr.On("GetByDigest", mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.NotFoundError(nil))
+	c.artMgr.On("Create", mock.Anything, mock.Anything).Return(int64(1), errors.ConflictError(nil))
+	c.abstractor.On("AbstractMetadata").Return(nil)
+	created, art, err = c.ctl.ensureArtifact(orm.NewContext(nil, &ormtesting.FakeOrmer{}), "library/hello-world", digest)
+	c.Require().Error(err, errors.NotFoundError(nil))
+	c.False(created)
+	c.Require().Nil(art)
 }
 
 func (c *controllerTestSuite) TestEnsure() {
@@ -249,7 +265,7 @@ func (c *controllerTestSuite) TestEnsure() {
 	c.artMgr.On("GetByDigest", mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.NotFoundError(nil))
 	c.artMgr.On("Create", mock.Anything, mock.Anything).Return(int64(1), nil)
 	c.abstractor.On("AbstractMetadata").Return(nil)
-	c.tagCtl.On("Ensure").Return(nil)
+	c.tagCtl.On("Ensure").Return(int64(1), nil)
 	c.accMgr.On("Ensure").Return(nil)
 	_, id, err := c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), "library/hello-world", digest, &ArtOption{
 		Tags: []string{"latest"},
@@ -299,6 +315,44 @@ func (c *controllerTestSuite) TestList() {
 	}, nil)
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
 	artifacts, err := c.ctl.List(nil, query, option)
+	c.Require().Nil(err)
+	c.Require().Len(artifacts, 1)
+	c.Equal(int64(1), artifacts[0].ID)
+	c.Require().Len(artifacts[0].Tags, 1)
+	c.Equal(int64(1), artifacts[0].Tags[0].ID)
+	c.Equal(0, len(artifacts[0].Accessories))
+}
+
+func (c *controllerTestSuite) TestListWithLatest() {
+	query := &q.Query{}
+	option := &Option{
+		WithTag:       true,
+		WithAccessory: true,
+	}
+	c.artMgr.On("ListWithLatest", mock.Anything, mock.Anything).Return([]*artifact.Artifact{
+		{
+			ID:           1,
+			RepositoryID: 1,
+		},
+	}, nil)
+	c.tagCtl.On("List").Return([]*tag.Tag{
+		{
+			Tag: model_tag.Tag{
+				ID:           1,
+				RepositoryID: 1,
+				ArtifactID:   1,
+				Name:         "latest",
+			},
+		},
+	}, nil)
+	c.repoMgr.On("Get", mock.Anything, mock.Anything).Return(&repomodel.RepoRecord{
+		Name: "library/hello-world",
+	}, nil)
+	c.repoMgr.On("List", mock.Anything, mock.Anything).Return([]*repomodel.RepoRecord{
+		{RepositoryID: 1, Name: "library/hello-world"},
+	}, nil)
+	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
+	artifacts, err := c.ctl.ListWithLatest(nil, query, option)
 	c.Require().Nil(err)
 	c.Require().Len(artifacts, 1)
 	c.Equal(int64(1), artifacts[0].ID)
@@ -433,6 +487,7 @@ func (c *controllerTestSuite) TestDeleteDeeply() {
 	// root artifact and doesn't exist
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(nil, errors.NotFoundError(nil))
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{}, nil)
 	err := c.ctl.deleteDeeply(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, true, false)
 	c.Require().NotNil(err)
 	c.Assert().True(errors.IsErr(err, errors.NotFoundCode))
@@ -443,6 +498,7 @@ func (c *controllerTestSuite) TestDeleteDeeply() {
 	// child artifact and doesn't exist
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(nil, errors.NotFoundError(nil))
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{}, nil)
 	err = c.ctl.deleteDeeply(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, false, false)
 	c.Require().Nil(err)
 
@@ -460,8 +516,9 @@ func (c *controllerTestSuite) TestDeleteDeeply() {
 		},
 	}, nil)
 	c.repoMgr.On("Get", mock.Anything, mock.Anything).Return(&repomodel.RepoRecord{}, nil)
-	c.artrashMgr.On("Create").Return(0, nil)
+	c.artrashMgr.On("Create", mock.Anything, mock.Anything).Return(int64(0), nil)
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{}, nil)
 	err = c.ctl.deleteDeeply(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, false, false)
 	c.Require().Nil(err)
 
@@ -478,6 +535,7 @@ func (c *controllerTestSuite) TestDeleteDeeply() {
 		},
 	}, nil)
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{}, nil)
 	err = c.ctl.deleteDeeply(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, true, false)
 	c.Require().NotNil(err)
 
@@ -494,6 +552,7 @@ func (c *controllerTestSuite) TestDeleteDeeply() {
 		},
 	}, nil)
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{}, nil)
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{}, nil)
 	err = c.ctl.deleteDeeply(nil, 1, false, false)
 	c.Require().Nil(err)
 
@@ -518,7 +577,8 @@ func (c *controllerTestSuite) TestDeleteDeeply() {
 	c.blobMgr.On("List", mock.Anything, mock.Anything).Return(nil, nil)
 	c.blobMgr.On("CleanupAssociationsForProject", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	c.repoMgr.On("Get", mock.Anything, mock.Anything).Return(&repomodel.RepoRecord{}, nil)
-	c.artrashMgr.On("Create").Return(0, nil)
+	c.artrashMgr.On("Create", mock.Anything, mock.Anything).Return(int64(0), nil)
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{}, nil)
 	err = c.ctl.deleteDeeply(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, true, true)
 	c.Require().Nil(err)
 
@@ -545,10 +605,10 @@ func (c *controllerTestSuite) TestCopy() {
 	}, nil)
 	acc := &basemodel.Default{
 		Data: accessorymodel.AccessoryData{
-			ID:            1,
-			ArtifactID:    2,
-			SubArtifactID: 1,
-			Type:          accessorymodel.TypeCosignSignature,
+			ID:                1,
+			ArtifactID:        2,
+			SubArtifactDigest: "sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180",
+			Type:              accessorymodel.TypeCosignSignature,
 		},
 	}
 	c.accMgr.On("List", mock.Anything, mock.Anything).Return([]accessorymodel.Accessory{
@@ -561,9 +621,9 @@ func (c *controllerTestSuite) TestCopy() {
 	}, nil)
 	c.abstractor.On("AbstractMetadata").Return(nil)
 	c.artMgr.On("Create", mock.Anything, mock.Anything).Return(int64(1), nil)
-	c.regCli.On("Copy").Return(nil)
-	c.tagCtl.On("Ensure").Return(nil)
-	c.accMgr.On("Ensure", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	c.regCli.On("Copy", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	c.tagCtl.On("Ensure").Return(int64(1), nil)
+	c.accMgr.On("Ensure", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	_, err := c.ctl.Copy(orm.NewContext(nil, &ormtesting.FakeOrmer{}), "library/hello-world", "latest", "library/hello-world2")
 	c.Require().Nil(err)
 }
@@ -598,6 +658,15 @@ func (c *controllerTestSuite) TestUpdatePullTime() {
 	c.Require().NotNil(err)
 	c.tagCtl.AssertExpectations(c.T())
 
+	// if no tag, should not update tag
+	c.SetupTest()
+	c.tagCtl.On("Update").Return(nil)
+	c.artMgr.On("UpdatePullTime", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	err = c.ctl.UpdatePullTime(nil, 1, 0, time.Now())
+	c.Require().Nil(err)
+	c.artMgr.AssertExpectations(c.T())
+	// should not call tag Update
+	c.tagCtl.AssertNotCalled(c.T(), "Update")
 }
 
 func (c *controllerTestSuite) TestGetAddition() {
@@ -652,6 +721,29 @@ func (c *controllerTestSuite) TestWalk() {
 
 		c.Equal(3, n)
 	}
+}
+
+func (c *controllerTestSuite) TestIsIntoto() {
+	blobs := []*models.Blob{
+		{Digest: "sha256:00000", ContentType: "application/vnd.oci.image.manifest.v1+json"},
+		{Digest: "sha256:22222", ContentType: "application/vnd.oci.image.config.v1+json"},
+		{Digest: "sha256:11111", ContentType: "application/vnd.in-toto+json"},
+	}
+	c.blobMgr.On("GetByArt", mock.Anything, mock.Anything).Return(blobs, nil).Once()
+	isIntoto, err := c.ctl.HasUnscannableLayer(context.Background(), "sha256: 77777")
+	c.Nil(err)
+	c.True(isIntoto)
+
+	blobs2 := []*models.Blob{
+		{Digest: "sha256:00000", ContentType: "application/vnd.oci.image.manifest.v1+json"},
+		{Digest: "sha256:22222", ContentType: "application/vnd.oci.image.config.v1+json"},
+		{Digest: "sha256:11111", ContentType: "application/vnd.oci.image.layer.v1.tar+gzip"},
+	}
+
+	c.blobMgr.On("GetByArt", mock.Anything, mock.Anything).Return(blobs2, nil).Once()
+	isIntoto2, err := c.ctl.HasUnscannableLayer(context.Background(), "sha256: 8888")
+	c.Nil(err)
+	c.False(isIntoto2)
 }
 
 func TestControllerTestSuite(t *testing.T) {

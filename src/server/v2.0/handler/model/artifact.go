@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/go-openapi/strfmt"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/lib/log"
 	pkg_art "github.com/goharbor/harbor/src/pkg/artifact"
@@ -27,7 +28,9 @@ import (
 // Artifact model
 type Artifact struct {
 	artifact.Artifact
+	// TODO: rename to VulOverview
 	ScanOverview map[string]interface{} `json:"scan_overview"`
+	SBOMOverView map[string]interface{} `json:"sbom_overview"`
 }
 
 // ToSwagger converts the artifact to the swagger model
@@ -46,6 +49,8 @@ func (a *Artifact) ToSwagger() *models.Artifact {
 		PushTime:          strfmt.DateTime(a.PushTime),
 		ExtraAttrs:        a.ExtraAttrs,
 		Annotations:       a.Annotations,
+		ArtifactType:      a.ArtifactType,
+		RepositoryName:    a.RepositoryName,
 	}
 
 	for _, reference := range a.References {
@@ -82,6 +87,18 @@ func (a *Artifact) ToSwagger() *models.Artifact {
 
 			art.ScanOverview[key] = summary
 		}
+	}
+	if len(a.SBOMOverView) > 0 {
+		js, err := json.Marshal(a.SBOMOverView)
+		if err != nil {
+			log.Warningf("convert sbom summary failed, error: %v", err)
+		}
+		sbomOverview := &models.SBOMOverview{}
+		err = json.Unmarshal(js, sbomOverview)
+		if err != nil {
+			log.Warningf("failed to get sbom summary: error: %v", err)
+		}
+		art.SbomOverview = sbomOverview
 	}
 	return art
 }

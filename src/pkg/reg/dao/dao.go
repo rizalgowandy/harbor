@@ -1,3 +1,6 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -106,7 +109,7 @@ func (d *dao) Update(ctx context.Context, registry *Registry, props ...string) e
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("registry %d not found", registry.ID)
+		return errors.NotFoundError(nil).WithMessagef("registry %d not found", registry.ID)
 	}
 	return nil
 }
@@ -123,7 +126,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("registry %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("registry %d not found", id)
 	}
 	return nil
 }

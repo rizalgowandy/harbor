@@ -74,7 +74,7 @@ func (d *deletionFlow) createTasks(ctx context.Context, srcResources, dstResourc
 		}
 
 		job := &task.Job{
-			Name: job.Replication,
+			Name: job.ReplicationVendorType,
 			Metadata: &job.Metadata{
 				JobKind: job.KindGeneric,
 			},
@@ -93,7 +93,8 @@ func (d *deletionFlow) createTasks(ctx context.Context, srcResources, dstResourc
 			"operation":            operation,
 			"resource_type":        string(resource.Type),
 			"source_resource":      getResourceName(resource),
-			"destination_resource": getResourceName(dstResources[i])}); err != nil {
+			"destination_resource": getResourceName(dstResources[i]),
+			"references":           getResourceReferences(dstResources[i])}); err != nil {
 			return err
 		}
 	}

@@ -1,12 +1,28 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package chart
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v2"
 	helm_chart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"strings"
 )
 
 var (
@@ -15,8 +31,9 @@ var (
 )
 
 const (
-	readmeFileName = "README.MD"
-	valuesFileName = "VALUES.YAML"
+	readmeFileName       = "README.MD"
+	valuesFileName       = "VALUES.YAML"
+	dependenciesFileName = "REQUIREMENTS.YAML"
 )
 
 // Operator ...
@@ -49,7 +66,7 @@ func (cho *operator) GetDetails(content []byte) (*VersionDetails, error) {
 	depts := make([]*helm_chart.Dependency, 0)
 
 	// for APIVersionV2, the dependency is in the Chart.yaml
-	if chartData.Metadata.APIVersion == helm_chart.APIVersionV1 {
+	if chartData.Metadata.APIVersion == helm_chart.APIVersionV2 {
 		depts = chartData.Metadata.Dependencies
 	}
 
@@ -62,10 +79,26 @@ func (cho *operator) GetDetails(content []byte) (*VersionDetails, error) {
 
 	// Append other files like 'README.md' 'values.yaml'
 	for _, v := range chartData.Raw {
+		// for APIVersionV1, the dependency is in the requirements.yaml
+		if strings.ToUpper(v.Name) == dependenciesFileName && chartData.Metadata.APIVersion == helm_chart.APIVersionV1 {
+			depMap := make(map[string][]*helm_chart.Dependency)
+			if err := yaml.Unmarshal(v.Data, &depMap); err != nil {
+				return nil, err
+			}
+
+			deps, ok := depMap["dependencies"]
+			if !ok {
+				return nil, errors.New("invalid requirements.yaml, no dependencies found")
+			}
+			depts = deps
+			continue
+		}
+
 		if strings.ToUpper(v.Name) == readmeFileName {
 			files[readmeFileName] = string(v.Data)
 			continue
 		}
+
 		if strings.ToUpper(v.Name) == valuesFileName {
 			files[valuesFileName] = string(v.Data)
 			continue
@@ -83,7 +116,7 @@ func (cho *operator) GetDetails(content []byte) (*VersionDetails, error) {
 
 // GetData returns raw data of chart
 func (cho *operator) GetData(content []byte) (*helm_chart.Chart, error) {
-	if content == nil || len(content) == 0 {
+	if len(content) == 0 {
 		return nil, errors.New("zero content")
 	}
 
