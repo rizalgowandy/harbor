@@ -16,9 +16,12 @@ package scan
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/goharbor/harbor/src/common/secret"
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event/metadata"
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/robot"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -38,6 +41,7 @@ var (
 	robotCtl    = robot.Ctl
 	scanCtl     = DefaultController
 	taskMgr     = task.Mgr
+	execMgr     = task.ExecMgr
 )
 
 func init() {
@@ -46,16 +50,27 @@ func init() {
 	}
 
 	// NOTE: the vendor type of execution for the scan job trigger by the scan all is VendorTypeScanAll
-	if err := task.RegisterTaskStatusChangePostFunc(VendorTypeScanAll, scanTaskStatusChange); err != nil {
+	if err := task.RegisterTaskStatusChangePostFunc(job.ScanAllVendorType, scanTaskStatusChange); err != nil {
 		log.Fatalf("failed to register the task status change post for the scan all job, error %v", err)
 	}
 
-	if err := task.RegisterTaskStatusChangePostFunc(job.ImageScanJob, scanTaskStatusChange); err != nil {
+	if err := task.RegisterTaskStatusChangePostFunc(job.ImageScanJobVendorType, scanTaskStatusChange); err != nil {
 		log.Fatalf("failed to register the task status change post for the scan job, error %v", err)
 	}
 }
 
 func scanAllCallback(ctx context.Context, param string) error {
+	if param != "" {
+		params := make(map[string]interface{})
+		if err := json.Unmarshal([]byte(param), &params); err != nil {
+			return err
+		}
+
+		if op, ok := params["operator"].(string); ok {
+			ctx = context.WithValue(ctx, operator.ContextKey{}, op)
+		}
+	}
+
 	_, err := scanCtl.ScanAll(ctx, task.ExecutionTriggerSchedule, true)
 	return err
 }
@@ -71,9 +86,14 @@ func scanTaskStatusChange(ctx context.Context, taskID int64, status string) (err
 			return err
 		}
 
+		exec, err := execMgr.Get(ctx, t.ExecutionID)
+		if err != nil {
+			return err
+		}
+
 		robotID := getRobotID(t.ExtraAttrs)
 		if robotID > 0 {
-			if err := robotCtl.Delete(ctx, robotID); err != nil {
+			if err := robotCtl.Delete(ctx, robotID, &robot.Option{Operator: secret.JobserviceUser}); err != nil {
 				// Should not block the main flow, just logged
 				logger.WithFields(log.Fields{"robot_id": robotID, "error": err}).Error("delete robot account failed")
 			} else {
@@ -97,11 +117,21 @@ func scanTaskStatusChange(ctx context.Context, taskID int64, status string) (err
 					},
 					Status: status,
 				}
+
+				if operator, ok := exec.ExtraAttrs["operator"].(string); ok {
+					e.Operator = operator
+				}
+
+				// extract ScanType if exist in ExtraAttrs
+				if c, ok := exec.ExtraAttrs["enabled_capabilities"].(map[string]interface{}); ok {
+					if Type, ok := c["type"].(string); ok {
+						e.ScanType = Type
+					}
+				}
 				// fire event
 				notification.AddEvent(ctx, e)
 			}
 		}
-
 	}
 
 	return nil

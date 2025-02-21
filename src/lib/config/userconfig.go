@@ -1,27 +1,28 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package config
 
 import (
 	"context"
+	"strings"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	cfgModels "github.com/goharbor/harbor/src/lib/config/models"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"strings"
 )
 
 // It contains all user related configurations, each of user related settings requires a context provided
@@ -80,7 +81,13 @@ func LDAPGroupConf(ctx context.Context) (*cfgModels.GroupConf, error) {
 		SearchScope:         mgr.Get(ctx, common.LDAPGroupSearchScope).GetInt(),
 		AdminDN:             mgr.Get(ctx, common.LDAPGroupAdminDn).GetString(),
 		MembershipAttribute: mgr.Get(ctx, common.LDAPGroupMembershipAttribute).GetString(),
+		AttachParallel:      mgr.Get(ctx, common.LDAPGroupAttachParallel).GetBool(),
 	}, nil
+}
+
+// SessionTimeout returns the session timeout for web (in minute).
+func SessionTimeout(ctx context.Context) int64 {
+	return DefaultMgr().Get(ctx, common.SessionTimeout).GetInt64()
 }
 
 // TokenExpiration returns the token expiration time (in minute)
@@ -105,25 +112,6 @@ func OnlyAdminCreateProject(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	return DefaultMgr().Get(ctx, common.ProjectCreationRestriction).GetString() == common.ProCrtRestrAdmOnly, nil
-}
-
-// Email returns email server settings
-func Email(ctx context.Context) (*cfgModels.Email, error) {
-	mgr := DefaultMgr()
-	err := mgr.Load(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &cfgModels.Email{
-		Host:     mgr.Get(ctx, common.EmailHost).GetString(),
-		Port:     mgr.Get(ctx, common.EmailPort).GetInt(),
-		Username: mgr.Get(ctx, common.EmailUsername).GetString(),
-		Password: mgr.Get(ctx, common.EmailPassword).GetString(),
-		SSL:      mgr.Get(ctx, common.EmailSSL).GetBool(),
-		From:     mgr.Get(ctx, common.EmailFrom).GetString(),
-		Identity: mgr.Get(ctx, common.EmailIdentity).GetString(),
-		Insecure: mgr.Get(ctx, common.EmailInsecure).GetBool(),
-	}, nil
 }
 
 // UAASettings returns the UAASettings to access UAA service.
@@ -173,7 +161,7 @@ func OIDCSetting(ctx context.Context) (*cfgModels.OIDCSetting, error) {
 		return nil, err
 	}
 	scopeStr := mgr.Get(ctx, common.OIDCScope).GetString()
-	extEndpoint := strings.TrimSuffix(mgr.Get(nil, common.ExtEndpoint).GetString(), "/")
+	extEndpoint := strings.TrimSuffix(mgr.Get(context.Background(), common.ExtEndpoint).GetString(), "/")
 	scope := SplitAndTrim(scopeStr, ",")
 	return &cfgModels.OIDCSetting{
 		Name:               mgr.Get(ctx, common.OIDCName).GetString(),
@@ -183,11 +171,23 @@ func OIDCSetting(ctx context.Context) (*cfgModels.OIDCSetting, error) {
 		ClientID:           mgr.Get(ctx, common.OIDCCLientID).GetString(),
 		ClientSecret:       mgr.Get(ctx, common.OIDCClientSecret).GetString(),
 		GroupsClaim:        mgr.Get(ctx, common.OIDCGroupsClaim).GetString(),
+		GroupFilter:        mgr.Get(ctx, common.OIDCGroupFilter).GetString(),
 		AdminGroup:         mgr.Get(ctx, common.OIDCAdminGroup).GetString(),
 		RedirectURL:        extEndpoint + common.OIDCCallbackPath,
 		Scope:              scope,
 		UserClaim:          mgr.Get(ctx, common.OIDCUserClaim).GetString(),
 		ExtraRedirectParms: mgr.Get(ctx, common.OIDCExtraRedirectParms).GetStringToStringMap(),
+	}, nil
+}
+
+// GDPRSetting returns the setting of GDPR
+func GDPRSetting(ctx context.Context) (*cfgModels.GDPRSetting, error) {
+	if err := DefaultMgr().Load(ctx); err != nil {
+		return nil, err
+	}
+	return &cfgModels.GDPRSetting{
+		DeleteUser: DefaultMgr().Get(ctx, common.GDPRDeleteUser).GetBool(),
+		AuditLogs:  DefaultMgr().Get(ctx, common.GDPRAuditLogs).GetBool(),
 	}, nil
 }
 
@@ -240,4 +240,40 @@ func PullTimeUpdateDisable(ctx context.Context) bool {
 // PullAuditLogDisable returns a bool to indicate if pull audit log is disable for pull request.
 func PullAuditLogDisable(ctx context.Context) bool {
 	return DefaultMgr().Get(ctx, common.PullAuditLogDisable).GetBool()
+}
+
+// AuditLogForwardEndpoint returns the audit log forward endpoint
+func AuditLogForwardEndpoint(ctx context.Context) string {
+	return DefaultMgr().Get(ctx, common.AuditLogForwardEndpoint).GetString()
+}
+
+// SkipAuditLogDatabase returns the audit log forward endpoint
+func SkipAuditLogDatabase(ctx context.Context) bool {
+	return DefaultMgr().Get(ctx, common.SkipAuditLogDatabase).GetBool()
+}
+
+// ScannerSkipUpdatePullTime returns the scanner skip update pull time setting
+func ScannerSkipUpdatePullTime(ctx context.Context) bool {
+	return DefaultMgr().Get(ctx, common.ScannerSkipUpdatePullTime).GetBool()
+}
+
+// BannerMessage returns the customized banner message
+func BannerMessage(ctx context.Context) string {
+	return DefaultMgr().Get(ctx, common.BannerMessage).GetString()
+}
+
+// AuditLogEventEnabled returns the audit log enabled setting for a specific event_type, such as delete_user, create_user
+func AuditLogEventEnabled(ctx context.Context, eventType string) bool {
+	if DefaultMgr() == nil || DefaultMgr().Get(ctx, common.AuditLogEventsDisabled) == nil {
+		return true
+	}
+	disableListStr := DefaultMgr().Get(ctx, common.AuditLogEventsDisabled).GetString()
+	disableList := strings.Split(disableListStr, ",")
+	for _, t := range disableList {
+		tName := strings.TrimSpace(t)
+		if strings.EqualFold(tName, eventType) {
+			return false
+		}
+	}
+	return true
 }

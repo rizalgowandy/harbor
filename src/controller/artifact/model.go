@@ -17,6 +17,7 @@ package artifact
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib/encode/repository"
@@ -79,6 +80,30 @@ func (artifact *Artifact) SetAdditionLink(addition, version string) {
 	artifact.AdditionLinks[addition] = &AdditionLink{HREF: href, Absolute: false}
 }
 
+// SetSBOMAdditionLink set the link of SBOM addition
+func (artifact *Artifact) SetSBOMAdditionLink(sbomDgst string, version string) {
+	if artifact.AdditionLinks == nil {
+		artifact.AdditionLinks = make(map[string]*AdditionLink)
+	}
+	addition := "sboms"
+	projectName, repo := utils.ParseRepository(artifact.RepositoryName)
+	// encode slash as %252F
+	repo = repository.Encode(repo)
+	href := fmt.Sprintf("/api/%s/projects/%s/repositories/%s/artifacts/%s/additions/sbom", version, projectName, repo, sbomDgst)
+
+	artifact.AdditionLinks[addition] = &AdditionLink{HREF: href, Absolute: false}
+}
+
+// AbstractLabelNames abstracts the label names from the artifact.
+func (artifact *Artifact) AbstractLabelNames() []string {
+	var names []string
+	for _, label := range artifact.Labels {
+		names = append(names, label.Name)
+	}
+
+	return names
+}
+
 // AdditionLink is a link via that the addition can be fetched
 type AdditionLink struct {
 	HREF     string `json:"href"`
@@ -87,8 +112,9 @@ type AdditionLink struct {
 
 // Option is used to specify the properties returned when listing/getting artifacts
 type Option struct {
-	WithTag       bool
-	TagOption     *tag.Option // only works when WithTag is set to true
-	WithLabel     bool
-	WithAccessory bool
+	WithTag            bool
+	TagOption          *tag.Option // only works when WithTag is set to true
+	WithLabel          bool
+	WithAccessory      bool
+	LatestInRepository bool
 }

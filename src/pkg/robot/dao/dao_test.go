@@ -1,13 +1,15 @@
 package dao
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/robot/model"
 	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/suite"
-	"testing"
 )
 
 type DaoTestSuite struct {
@@ -50,6 +52,8 @@ func (suite *DaoTestSuite) robots() {
 		Description: "test3 description",
 		ProjectID:   1,
 		Secret:      suite.RandString(10),
+		CreatorType: "local",
+		CreatorRef:  int64(1),
 	})
 	suite.Nil(err)
 
@@ -118,6 +122,7 @@ func (suite *DaoTestSuite) TestGet() {
 	r, err := suite.dao.Get(orm.Context(), suite.robotID3)
 	suite.Nil(err)
 	suite.Equal("test3", r.Name)
+	suite.Equal("local", r.CreatorType)
 }
 
 func (suite *DaoTestSuite) TestCount() {

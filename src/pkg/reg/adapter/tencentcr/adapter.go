@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tencentcr
 
 import (
@@ -10,6 +24,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/regions"
+	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
+
 	commonhttp "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
@@ -17,15 +36,10 @@ import (
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/pkg/reg/util"
 	"github.com/goharbor/harbor/src/pkg/registry/auth/bearer"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/regions"
-	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
 )
 
 var (
-	errInvalidTcrEndpoint    error = errors.New("[tencent-tcr.newAdapter] Invalid TCR instance endpoint")
-	errPingTcrEndpointFailed error = errors.New("[tencent-tcr.newAdapter] Ping TCR instance endpoint failed")
+	errInvalidTcrEndpoint = errors.New("[tencent-tcr.newAdapter] Invalid TCR instance endpoint")
 )
 
 func init() {
@@ -121,7 +135,7 @@ func newAdapter(registry *model.Registry) (a *adapter, err error) {
 			Values: []*string{common.StringPtr(strings.ReplaceAll(registryURL.Host, ".tencentcloudcr.com", ""))},
 		},
 	}
-	var resp = tcr.NewDescribeInstancesResponse()
+	var resp *tcr.DescribeInstancesResponse
 	resp, err = client.DescribeInstances(req)
 	if err != nil {
 		log.Errorf("DescribeInstances error=%s", err.Error())
@@ -170,7 +184,6 @@ func (a *adapter) Info() (info *model.RegistryInfo, err error) {
 		Type: model.RegistryTypeTencentTcr,
 		SupportedResourceTypes: []string{
 			model.ResourceTypeImage,
-			model.ResourceTypeChart,
 		},
 		SupportedResourceFilters: []*model.FilterStyle{
 			{
@@ -219,7 +232,6 @@ func (a *adapter) PrepareForPush(resources []*model.Resource) (err error) {
 		if err != nil {
 			return
 		}
-		return
 	}
 
 	return

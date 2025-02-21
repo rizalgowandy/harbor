@@ -16,9 +16,12 @@ package v2
 
 import (
 	"fmt"
+
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/artifact"
+	ctltag "github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib/encode/repository"
+	labelmodel "github.com/goharbor/harbor/src/pkg/label/model"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/harbor/base"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	repomodel "github.com/goharbor/harbor/src/pkg/repository/model"
@@ -27,6 +30,7 @@ import (
 
 type client struct {
 	*base.Client
+	pageSize int64
 }
 
 func (c *client) listRepositories(project *base.Project) ([]*model.Repository, error) {
@@ -48,34 +52,17 @@ func (c *client) listRepositories(project *base.Project) ([]*model.Repository, e
 func (c *client) listArtifacts(repo string) ([]*model.Artifact, error) {
 	project, repo := utils.ParseRepository(repo)
 	repo = repository.Encode(repo)
-	url := fmt.Sprintf("%s/projects/%s/repositories/%s/artifacts?with_label=true&with_accessory=true",
-		c.BasePath(), project, repo)
+	// set the default value to equal the value specified when the UI submits the request
+	if c.pageSize == 0 {
+		c.pageSize = 15
+	}
+	url := fmt.Sprintf("%s/projects/%s/repositories/%s/artifacts?page_size=%d&with_label=true&with_accessory=true",
+		c.BasePath(), project, repo, c.pageSize)
 	artifacts := []*artifact.Artifact{}
 	if err := c.C.GetAndIteratePagination(url, &artifacts); err != nil {
 		return nil, err
 	}
 	var arts []*model.Artifact
-
-	// append the accessory objects behind the subject artifact if it has.
-	var getAccessoryArts = func(art *artifact.Artifact) ([]*model.Artifact, error) {
-		var accArts = []*model.Artifact{}
-		for _, acc := range art.Accessories {
-			accArt := &model.Artifact{
-				Type:   art.Type,
-				Digest: acc.GetData().Digest,
-			}
-			tags, err := c.listTags(project, repo, acc.GetData().Digest)
-			if err != nil {
-				return nil, err
-			}
-			for _, tag := range tags {
-				accArt.Tags = append(accArt.Tags, tag)
-			}
-
-			accArts = append(accArts, accArt)
-		}
-		return accArts, nil
-	}
 
 	for _, artItem := range artifacts {
 		art := &model.Artifact{
@@ -91,8 +78,8 @@ func (c *client) listArtifacts(repo string) ([]*model.Artifact, error) {
 		arts = append(arts, art)
 
 		// append the accessory of index or individual artifact
-		accArts, err := getAccessoryArts(artItem)
-		if err != nil {
+		accArts := make([]*model.Artifact, 0)
+		if err := c.getAccessoryArts(project, repo, artItem, artItem.Labels, artItem.Tags, &accArts); err != nil {
 			return nil, err
 		}
 		arts = append(arts, accArts...)
@@ -105,14 +92,44 @@ func (c *client) listArtifacts(repo string) ([]*model.Artifact, error) {
 			if err := c.C.Get(url, &artRef); err != nil {
 				return nil, err
 			}
-			accArts, err := getAccessoryArts(&artRef)
-			if err != nil {
+			accArts := make([]*model.Artifact, 0)
+			if err := c.getAccessoryArts(project, repo, &artRef, artItem.Labels, artItem.Tags, &accArts); err != nil {
 				return nil, err
 			}
 			arts = append(arts, accArts...)
 		}
 	}
 	return arts, nil
+}
+
+func (c *client) getAccessoryArts(project, repo string, art *artifact.Artifact, labels []*labelmodel.Label, tags []*ctltag.Tag, accArts *[]*model.Artifact) error {
+	for _, acc := range art.Accessories {
+		accArt := &model.Artifact{
+			Type:   art.Type,
+			Digest: acc.GetData().Digest,
+			IsAcc:  true,
+		}
+		for _, tag := range tags {
+			accArt.ParentTags = append(accArt.ParentTags, tag.Name)
+		}
+		// set the labels belonging to the subject manifest to the accessories.
+		for _, label := range labels {
+			accArt.Labels = append(accArt.Labels, label.Name)
+		}
+		// recursively get the accessories of the accessory
+		art, err := c.getArtifact(project, repo, acc.GetData().Digest, true)
+		if err != nil {
+			return err
+		}
+		for _, tag := range art.Tags {
+			accArt.Tags = append(accArt.Tags, tag.Name)
+		}
+		*accArts = append(*accArts, accArt)
+		if err != c.getAccessoryArts(project, repo, art, labels, tags, accArts) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *client) listTags(project, repo, digest string) ([]string, error) {
@@ -127,6 +144,16 @@ func (c *client) listTags(project, repo, digest string) ([]string, error) {
 		tagNames = append(tagNames, tag.Name)
 	}
 	return tagNames, nil
+}
+
+func (c *client) getArtifact(project, repo, digest string, withAccessory bool) (*artifact.Artifact, error) {
+	url := fmt.Sprintf("%s/projects/%s/repositories/%s/artifacts/%s?with_accessory=%t&with_tag=true",
+		c.BasePath(), project, repo, digest, withAccessory)
+	artifact := &artifact.Artifact{}
+	if err := c.C.Get(url, &artifact); err != nil {
+		return nil, err
+	}
+	return artifact, nil
 }
 
 func (c *client) deleteTag(repo, tag string) error {

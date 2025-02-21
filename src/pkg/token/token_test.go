@@ -1,15 +1,16 @@
 package token
 
 import (
-	"github.com/goharbor/harbor/src/lib/config"
 	"os"
 	"testing"
 	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
 	robot_claim "github.com/goharbor/harbor/src/pkg/token/claims/robot"
-	jwt "github.com/golang-jwt/jwt/v4"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestMain(m *testing.M) {
@@ -32,13 +33,13 @@ func TestNew(t *testing.T) {
 	tokenID := int64(123)
 	projectID := int64(321)
 	tokenExpiration := time.Duration(10) * 24 * time.Hour
-	expiresAt := time.Now().UTC().Add(tokenExpiration).Unix()
+	expiresAt := time.Now().UTC().Add(tokenExpiration)
 	robot := robot_claim.Claim{
 		TokenID:   tokenID,
 		ProjectID: projectID,
 		Access:    policies,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expiresAt,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
 	}
 	defaultOpt := DefaultTokenOptions()
@@ -59,20 +60,56 @@ func TestRaw(t *testing.T) {
 		Resource: "/project/library/repository",
 		Action:   "pull",
 	}
-	policies := []*types.Policy{}
+	var policies []*types.Policy
 	policies = append(policies, rbacPolicy)
 
 	tokenID := int64(123)
 	projectID := int64(321)
 
 	tokenExpiration := time.Duration(10) * 24 * time.Hour
-	expiresAt := time.Now().UTC().Add(tokenExpiration).Unix()
+	expiresAt := time.Now().UTC().Add(tokenExpiration)
 	robot := robot_claim.Claim{
 		TokenID:   tokenID,
 		ProjectID: projectID,
 		Access:    policies,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expiresAt,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+		},
+	}
+	defaultOpt := DefaultTokenOptions()
+	if defaultOpt == nil {
+		assert.NotNil(t, defaultOpt)
+		return
+	}
+	token, err := New(defaultOpt, robot)
+	if err != nil {
+		assert.Nil(t, err)
+		return
+	}
+
+	rawTk, err := token.Raw()
+	assert.Nil(t, err)
+	assert.NotNil(t, rawTk)
+}
+
+func TestNewWithClockSkew(t *testing.T) {
+	rbacPolicy := &types.Policy{
+		Resource: "/project/library/repository",
+		Action:   "pull",
+	}
+	var policies []*types.Policy
+	policies = append(policies, rbacPolicy)
+
+	tokenID := int64(123)
+	projectID := int64(321)
+
+	expiresAt := time.Now().UTC().Add(-50 * time.Second)
+	robot := robot_claim.Claim{
+		TokenID:   tokenID,
+		ProjectID: projectID,
+		Access:    policies,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
 	}
 	defaultOpt := DefaultTokenOptions()
@@ -102,4 +139,48 @@ func TestParseWithClaims(t *testing.T) {
 	_, _ = Parse(defaultOpt, rawTk, rClaims)
 	assert.Equal(t, int64(0), rClaims.ProjectID)
 	assert.Equal(t, "/project/libray/repository", rClaims.Access[0].Resource.String())
+}
+
+func TestParseWithClaimsWithClockSkew(t *testing.T) {
+	rbacPolicy := &types.Policy{
+		Resource: "/project/library/repository",
+		Action:   "push",
+	}
+	var policies []*types.Policy
+	policies = append(policies, rbacPolicy)
+
+	tokenID := int64(123)
+	projectID := int64(321)
+
+	now := time.Now().UTC()
+	expiresAt := jwt.NewNumericDate(now.Add(time.Duration(10) * 24 * time.Hour))
+	notBefore := jwt.NewNumericDate(now.Add(50 * time.Second))
+	issuedAt := jwt.NewNumericDate(now.Add(50 * time.Second))
+	robot := robot_claim.Claim{
+		TokenID:   tokenID,
+		ProjectID: projectID,
+		Access:    policies,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: expiresAt,
+			NotBefore: notBefore,
+			IssuedAt:  issuedAt,
+		},
+	}
+	defaultOpt := DefaultTokenOptions()
+	if defaultOpt == nil {
+		assert.NotNil(t, defaultOpt)
+		return
+	}
+	token, err := New(defaultOpt, robot)
+	if err != nil {
+		assert.Nil(t, err)
+		return
+	}
+	rawTk, err := token.Raw()
+	assert.Nil(t, err)
+	rClaims := &robot_claim.Claim{}
+	token, err = Parse(defaultOpt, rawTk, rClaims)
+	assert.Nil(t, err)
+	assert.Equal(t, token.Token.Claims.(*robot_claim.Claim).Access[0].Resource, types.Resource("/project/library/repository"))
+	assert.Equal(t, token.Token.Claims.(*robot_claim.Claim).Access[0].Action, types.Action("push"))
 }

@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,16 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package db
 
 import (
 	"context"
 	"testing"
 
+	testifymock "github.com/stretchr/testify/mock"
+
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/testing/mock"
 	testinguserpkg "github.com/goharbor/harbor/src/testing/pkg/user"
-	testifymock "github.com/stretchr/testify/mock"
 )
 
 func TestSearchUser(t *testing.T) {

@@ -18,7 +18,8 @@ import (
 	"context"
 	"time"
 
-	o "github.com/astaxie/beego/orm"
+	o "github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
@@ -112,7 +113,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("repository %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("repository %d not found", id)
 	}
 	return nil
 }
@@ -127,7 +128,7 @@ func (d *dao) Update(ctx context.Context, repository *model.RepoRecord, props ..
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("repository %d not found", repository.RepositoryID)
+		return errors.NotFoundError(nil).WithMessagef("repository %d not found", repository.RepositoryID)
 	}
 	return nil
 }
@@ -146,8 +147,7 @@ func (d *dao) AddPullCount(ctx context.Context, id int64, count uint64) error {
 		return err
 	}
 	if num == 0 {
-		return errors.New(nil).WithMessage("failed to increase repository pull count: %d", id)
-
+		return errors.New(nil).WithMessagef("failed to increase repository pull count: %d", id)
 	}
 	return nil
 }

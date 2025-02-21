@@ -1,6 +1,25 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package model
 
-import "github.com/goharbor/harbor/src/pkg/retention/policy/rule"
+import (
+	"time"
+
+	"github.com/goharbor/harbor/src/pkg/auditext/model"
+	"github.com/goharbor/harbor/src/pkg/retention/policy/rule"
+)
 
 // Replication describes replication infos
 type Replication struct {
@@ -17,14 +36,17 @@ type Replication struct {
 	DestResource       *ReplicationResource `json:"dest_resource,omitempty"`
 	SuccessfulArtifact []*ArtifactInfo      `json:"successful_artifact,omitempty"`
 	FailedArtifact     []*ArtifactInfo      `json:"failed_artifact,omitempty"`
+	ExecutionID        int64                `json:"execution_id,omitempty"`
+	TaskID             int64                `json:"task_id,omitempty"`
 }
 
 // ArtifactInfo describe info of artifact
 type ArtifactInfo struct {
-	Type       string `json:"type"`
-	Status     string `json:"status"`
-	NameAndTag string `json:"name_tag"`
-	FailReason string `json:"fail_reason,omitempty"`
+	Type       string   `json:"type"`
+	Status     string   `json:"status"`
+	NameAndTag string   `json:"name_tag"`
+	References []string `json:"references"`
+	FailReason string   `json:"fail_reason,omitempty"`
 }
 
 // ReplicationResource describes replication resource info
@@ -58,4 +80,39 @@ type RetentionRule struct {
 	TagSelectors []*rule.Selector `json:"tag_selectors,omitempty" `
 	// Selector attached to the rule for filtering scope (e.g: repositories or namespaces)
 	ScopeSelectors map[string][]*rule.Selector `json:"scope_selectors,omitempty"`
+}
+
+// Scan describes scan infos
+type Scan struct {
+	// ScanType the scan type
+	ScanType string `json:"scan_type,omitempty"`
+}
+
+// CommonEvent ...
+type CommonEvent struct {
+	Operator             string
+	ProjectID            int64
+	OcurrAt              time.Time
+	Operation            string
+	Payload              string
+	SourceIP             string
+	ResourceType         string
+	ResourceName         string
+	OperationDescription string
+	IsSuccessful         bool
+}
+
+// ResolveToAuditLog ...
+func (c *CommonEvent) ResolveToAuditLog() (*model.AuditLogExt, error) {
+	auditLog := &model.AuditLogExt{
+		ProjectID:            c.ProjectID,
+		OpTime:               c.OcurrAt,
+		Operation:            c.Operation,
+		Username:             c.Operator,
+		ResourceType:         c.ResourceType,
+		Resource:             c.ResourceName,
+		OperationDescription: c.OperationDescription,
+		IsSuccessful:         c.IsSuccessful,
+	}
+	return auditLog, nil
 }

@@ -16,15 +16,16 @@ package project
 
 import (
 	"context"
-	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"strconv"
+
+	"github.com/graph-gophers/dataloader"
 
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
-	"github.com/goharbor/harbor/src/pkg/project"
+	"github.com/goharbor/harbor/src/pkg"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/user"
-	"github.com/graph-gophers/dataloader"
 )
 
 func getProjectsBatchFn(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
@@ -45,7 +46,7 @@ func getProjectsBatchFn(ctx context.Context, keys dataloader.Keys) []*dataloader
 		projectIDs = append(projectIDs, id)
 	}
 
-	projects, err := project.Mgr.List(ctx, q.New(q.KeyWords{"project_id__in": projectIDs}))
+	projects, err := pkg.ProjectMgr.List(ctx, q.New(q.KeyWords{"project_id__in": projectIDs}))
 	if err != nil {
 		return handleError(err)
 	}
@@ -74,7 +75,7 @@ func getProjectsBatchFn(ctx context.Context, keys dataloader.Keys) []*dataloader
 	for _, projectID := range projectIDs {
 		project, ok := projectsMap[projectID]
 		if !ok {
-			err := errors.NotFoundError(nil).WithMessage("project %d not found", projectID)
+			err := errors.NotFoundError(nil).WithMessagef("project %d not found", projectID)
 			return handleError(err)
 		}
 

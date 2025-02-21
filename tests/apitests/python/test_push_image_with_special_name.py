@@ -5,12 +5,11 @@ import urllib
 from testutils import ADMIN_CLIENT, suppress_urllib3_warning
 from testutils import harbor_server
 from testutils import TEARDOWN
-from library.sign import sign_image
 from library.artifact import Artifact
 from library.project import Project
 from library.user import User
 from library.repository import Repository
-from library.repository import push_image_to_project
+from library.repository import push_self_build_image_to_project
 
 class TestProjects(unittest.TestCase):
     @suppress_urllib3_warning
@@ -53,7 +52,7 @@ class TestProjects(unittest.TestCase):
         #1. Create user-001
         TestProjects.user_sign_image_id, user_sign_image_name = self.user.create_user(user_password = user_001_password, **ADMIN_CLIENT)
 
-        TestProjects.USER_sign_image_CLIENT=dict(with_signature = True, endpoint = url, username = user_sign_image_name, password = user_001_password)
+        TestProjects.USER_sign_image_CLIENT=dict(endpoint = url, username = user_sign_image_name, password = user_001_password)
 
         #2. Create a new private project(PA) by user(UA);
         TestProjects.project_sign_image_id, TestProjects.project_sign_image_name = self.project.create_project(metadata = {"public": "false"}, **ADMIN_CLIENT)
@@ -70,8 +69,7 @@ class TestProjects(unittest.TestCase):
         profix = "aaa/bbb"
 
         #5. Create a new repository(RA) and tag(TA) in project(PA) by user(UA);
-        TestProjects.repo_name, tag = push_image_to_project(TestProjects.project_sign_image_name, harbor_server, user_sign_image_name, user_001_password, image, src_tag, profix_for_image=profix)
-
+        TestProjects.repo_name, tag = push_self_build_image_to_project(TestProjects.project_sign_image_name, harbor_server, user_sign_image_name, user_001_password, profix+"/"+image, src_tag)
         #7. Get signature of image with tag(TA), it should be exist.
         full_name = urllib.parse.quote(profix+"/"+image,'utf-8')
 

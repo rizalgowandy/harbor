@@ -5,7 +5,7 @@ env:
    POSTGRESQL_USR: postgres
    POSTGRESQL_PWD: root123
    POSTGRESQL_DATABASE: registry
-   DOCKER_COMPOSE_VERSION: 1.23.0
+   DOCKER_COMPOSE_VERSION: 2.27.1
    HARBOR_ADMIN: admin
    HARBOR_ADMIN_PASSWD: Harbor12345
    CORE_SECRET: tempString
@@ -16,9 +16,21 @@ env:
 
 on:
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'tests/**'
+      - '!tests/**.sh'
+      - '!tests/apitests/**'
+      - '!tests/ci/**'
   push:
     paths-ignore:
-    - 'docs/**'
+      - 'docs/**'
+      - '**.md'
+      - 'tests/**'
+      - '!tests/**.sh'
+      - '!tests/apitests/**'
+      - '!tests/ci/**'
 
 jobs:
   UTTEST:
@@ -29,17 +41,12 @@ jobs:
       - ubuntu-latest
     timeout-minutes: 100
     steps:
-      - name: Set up Go 1.17
-        uses: actions/setup-go@v1
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
         with:
-           go-version: 1.17.7
+           go-version: 1.23.2
         id: go
-      - name: setup Docker
-        uses: docker-practice/actions-setup-docker@0.0.1
-        with:
-          docker_version: 20.04
-          docker_channel: stable
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
          path: src/github.com/goharbor/harbor
       - name: setup env
@@ -59,7 +66,7 @@ jobs:
           env
           #sudo apt install -y xvfb
           #xvfb-run ls
-          curl -L https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
+          curl -L https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
           chmod +x docker-compose
           sudo mv docker-compose /usr/local/bin
           IP=`hostname -I | awk '{print $1}'`
@@ -82,7 +89,7 @@ jobs:
           bash ./tests/showtime.sh ./tests/ci/ut_run.sh $IP
           df -h
       - name: Codecov For BackEnd
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v5
         with:
           file: ./src/github.com/goharbor/harbor/profile.cov
           flags: unittests
@@ -95,17 +102,12 @@ jobs:
       - ubuntu-latest
     timeout-minutes: 100
     steps:
-      - name: Set up Go 1.17
-        uses: actions/setup-go@v1
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.17.7
+          go-version: 1.23.2
         id: go
-      - name: setup Docker
-        uses: docker-practice/actions-setup-docker@0.0.1
-        with:
-          docker_version: 18.09
-          docker_channel: stable
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/goharbor/harbor
       - name: setup env
@@ -129,7 +131,7 @@ jobs:
           df -h
           #sudo apt install -y xvfb
           #xvfb-run ls
-          curl -L https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
+          curl -L https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
           chmod +x docker-compose
           sudo mv docker-compose /usr/local/bin
       - name: install
@@ -155,17 +157,12 @@ jobs:
       - ubuntu-latest
     timeout-minutes: 100
     steps:
-      - name: Set up Go 1.17
-        uses: actions/setup-go@v1
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.17.7
+          go-version: 1.23.2
         id: go
-      - name: setup Docker
-        uses: docker-practice/actions-setup-docker@0.0.1
-        with:
-          docker_version: 18.09
-          docker_channel: stable
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/goharbor/harbor
       - name: setup env
@@ -189,7 +186,7 @@ jobs:
           df -h
           #sudo apt install -y xvfb
           #xvfb-run ls
-          curl -L https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
+          curl -L https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
           chmod +x docker-compose
           sudo mv docker-compose /usr/local/bin
       - name: install
@@ -215,17 +212,12 @@ jobs:
       - ubuntu-latest
     timeout-minutes: 100
     steps:
-      - name: Set up Go 1.17
-        uses: actions/setup-go@v1
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.17.7
+          go-version: 1.23.2
         id: go
-      - name: setup Docker
-        uses: docker-practice/actions-setup-docker@0.0.1
-        with:
-          docker_version: 18.09
-          docker_channel: stable
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/goharbor/harbor
       - name: setup env
@@ -248,7 +240,7 @@ jobs:
           df -h
           #sudo apt install -y xvfb
           #xvfb-run ls
-          curl -L https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
+          curl -L https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
           chmod +x docker-compose
           sudo mv docker-compose /usr/local/bin
       - name: install
@@ -273,17 +265,12 @@ jobs:
       - ubuntu-latest
     timeout-minutes: 100
     steps:
-      - name: Set up Go 1.17
-        uses: actions/setup-go@v1
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.17.7
+          go-version: 1.23.2
         id: go
-      - name: setup Docker
-        uses: docker-practice/actions-setup-docker@0.0.1
-        with:
-          docker_version: 18.09
-          docker_channel: stable
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/goharbor/harbor
       - name: setup env
@@ -305,7 +292,7 @@ jobs:
           df -h
           #sudo apt install -y xvfb
           #xvfb-run ls
-          curl -L https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
+          curl -L https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-`uname -s`-`uname -m` > docker-compose
           chmod +x docker-compose
           sudo mv docker-compose /usr/local/bin
           IP=`hostname -I | awk '{print $1}'`
@@ -330,10 +317,10 @@ jobs:
       - ubuntu-latest
     timeout-minutes: 100
     steps:
-      - uses: actions/setup-node@v1
+      - uses: actions/setup-node@v4
         with:
-          node-version: '16'
-      - uses: actions/checkout@v2
+          node-version: '18'
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/goharbor/harbor
       - name: script
@@ -344,7 +331,7 @@ jobs:
           bash ./tests/showtime.sh ./tests/ci/ui_ut_run.sh
           df -h
       - name: Codecov For UI
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v5
         with:
           file:  ./src/github.com/goharbor/harbor/src/portal/coverage/lcov.info
           flags: unittests

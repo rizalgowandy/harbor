@@ -15,10 +15,10 @@
 package index
 
 import (
-	"github.com/goharbor/harbor/src/lib/selector"
 	"sync"
 
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/selector"
 	"github.com/goharbor/harbor/src/lib/selector/selectors/doublestar"
 )
 
@@ -94,7 +94,7 @@ func Get(kind, decoration, pattern, extras string) (selector.Selector, error) {
 func Index() []*IndexedMeta {
 	all := make([]*IndexedMeta, 0)
 
-	index.Range(func(k, v interface{}) bool {
+	index.Range(func(_, v interface{}) bool {
 		if item, ok := v.(*indexedItem); ok {
 			all = append(all, item.Meta)
 			return true

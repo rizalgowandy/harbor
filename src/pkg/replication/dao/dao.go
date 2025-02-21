@@ -101,11 +101,15 @@ func (d *dao) Update(ctx context.Context, policy *model.Policy, props ...string)
 		return err
 	}
 	n, err := ormer.Update(policy, props...)
-	if e := orm.AsConflictError(err, "replication policy %s already exists", policy.Name); e != nil {
-		err = e
+	if err != nil {
+		if e := orm.AsConflictError(err, "replication policy %s already exists", policy.Name); e != nil {
+			err = e
+		}
+		return err
 	}
+
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("replication policy %d not found", policy.ID)
+		return errors.NotFoundError(nil).WithMessagef("replication policy %d not found", policy.ID)
 	}
 	return nil
 }
@@ -122,7 +126,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("replication policy %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("replication policy %d not found", id)
 	}
 	return nil
 }

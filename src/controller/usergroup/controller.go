@@ -1,16 +1,16 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package usergroup
 
@@ -81,7 +81,7 @@ func (c *controller) Update(ctx context.Context, id int, groupName string) error
 		return err
 	}
 	if len(ug) == 0 {
-		return errors.NotFoundError(nil).WithMessage("the user group with id %v is not found", id)
+		return errors.NotFoundError(nil).WithMessagef("the user group with id %v is not found", id)
 	}
 	return c.mgr.UpdateName(ctx, id, groupName)
 }
@@ -90,20 +90,19 @@ func (c *controller) Create(ctx context.Context, group model.UserGroup) (int, er
 	if group.GroupType == common.LDAPGroupType {
 		ldapGroup, err := auth.SearchGroup(ctx, group.LdapGroupDN)
 		if err == ldap.ErrNotFound || ldapGroup == nil {
-			return 0, errors.BadRequestError(nil).WithMessage("LDAP Group DN is not found: DN:%v", group.LdapGroupDN)
+			return 0, errors.BadRequestError(nil).WithMessagef("LDAP Group DN is not found: DN:%v", group.LdapGroupDN)
 		}
 		if err == ldap.ErrDNSyntax {
-			return 0, errors.BadRequestError(nil).WithMessage("invalid DN syntax. DN: %v", group.LdapGroupDN)
+			return 0, errors.BadRequestError(nil).WithMessagef("invalid DN syntax. DN: %v", group.LdapGroupDN)
 		}
 		if err != nil {
 			return 0, err
 		}
-
 	}
 	id, err := c.mgr.Create(ctx, group)
 	if err != nil && err == usergroup.ErrDupUserGroup {
 		return 0, errors.ConflictError(nil).
-			WithMessage("duplicate user group, group name:%v, group type: %v, ldap group DN: %v",
+			WithMessagef("duplicate user group, group name:%v, group type: %v, ldap group DN: %v",
 				group.GroupName, group.GroupType, group.LdapGroupDN)
 	}
 

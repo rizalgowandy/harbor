@@ -1,44 +1,42 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//	  http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package api
 
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/goharbor/harbor/src/chartserver"
-	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/lib/orm"
-	"github.com/goharbor/harbor/src/pkg/user"
-
 	"github.com/dghubble/sling"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/dao"
 	common_http "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/member"
 	memberModels "github.com/goharbor/harbor/src/pkg/member/models"
-	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/goharbor/harbor/src/pkg/user"
 )
 
 var (
@@ -147,7 +145,7 @@ func handleAndParse(r *testingRequest, v interface{}) error {
 		return err
 	}
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -314,26 +312,4 @@ func clean() {
 			fmt.Printf("failed to clean up user %d: %v \n", id, err)
 		}
 	}
-}
-
-// Provides a mock chart controller for deletable test cases
-func mockChartController() (*httptest.Server, *chartserver.Controller, error) {
-	mockServer := httptest.NewServer(htesting.MockChartRepoHandler)
-
-	var oldController, newController *chartserver.Controller
-	url, err := url.Parse(mockServer.URL)
-	if err == nil {
-		newController, err = chartserver.NewController(url)
-	}
-
-	if err != nil {
-		mockServer.Close()
-		return nil, nil, err
-	}
-
-	// Override current controller and keep the old one for restoring
-	oldController = chartController
-	chartController = newController
-
-	return mockServer, oldController, nil
 }

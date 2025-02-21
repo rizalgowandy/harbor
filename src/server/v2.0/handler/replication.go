@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
+
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/controller/replication"
 	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
@@ -45,7 +46,7 @@ type replicationAPI struct {
 	ctl replication.Controller
 }
 
-func (r *replicationAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (r *replicationAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
 	return nil
 }
 
@@ -107,6 +108,11 @@ func (r *replicationAPI) CreateReplicationPolicy(ctx context.Context, params ope
 		}
 		policy.Speed = *params.Policy.Speed
 	}
+
+	if params.Policy.CopyByChunk != nil {
+		policy.CopyByChunk = *params.Policy.CopyByChunk
+	}
+
 	id, err := r.ctl.CreatePolicy(ctx, policy)
 	if err != nil {
 		return r.SendError(ctx, err)
@@ -170,6 +176,11 @@ func (r *replicationAPI) UpdateReplicationPolicy(ctx context.Context, params ope
 		}
 		policy.Speed = *params.Policy.Speed
 	}
+
+	if params.Policy.CopyByChunk != nil {
+		policy.CopyByChunk = *params.Policy.CopyByChunk
+	}
+
 	if err := r.ctl.UpdatePolicy(ctx, policy); err != nil {
 		return r.SendError(ctx, err)
 	}
@@ -339,6 +350,12 @@ func (r *replicationAPI) ListReplicationTasks(ctx context.Context, params operat
 	if err := r.RequireSystemAccess(ctx, rbac.ActionList, rbac.ResourceReplication); err != nil {
 		return r.SendError(ctx, err)
 	}
+	// check the existence of the replication execution
+	_, err := r.ctl.GetExecution(ctx, params.ID)
+	if err != nil {
+		return r.SendError(ctx, err)
+	}
+
 	query, err := r.BuildQuery(ctx, nil, params.Sort, params.Page, params.PageSize)
 	if err != nil {
 		return r.SendError(ctx, err)
@@ -404,7 +421,7 @@ func (r *replicationAPI) GetReplicationLog(ctx context.Context, params operation
 	if execution.ID != task.ExecutionID {
 		return r.SendError(ctx, errors.New(nil).
 			WithCode(errors.NotFoundCode).
-			WithMessage("execution %d contains no task with ID %d", params.ID, params.TaskID))
+			WithMessagef("execution %d contains no task with ID %d", params.ID, params.TaskID))
 	}
 	log, err := r.ctl.GetTaskLog(ctx, params.TaskID)
 	if err != nil {
@@ -428,6 +445,7 @@ func convertReplicationPolicy(policy *repctlmodel.Policy) *models.ReplicationPol
 		ReplicateDeletion:         policy.ReplicateDeletion,
 		Speed:                     &policy.Speed,
 		UpdateTime:                strfmt.DateTime(policy.UpdateTime),
+		CopyByChunk:               &policy.CopyByChunk,
 	}
 	if policy.SrcRegistry != nil {
 		p.SrcRegistry = convertRegistry(policy.SrcRegistry)

@@ -20,12 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	replicationmodel "github.com/goharbor/harbor/src/pkg/replication/model"
-	"github.com/robfig/cron"
 )
 
 // Policy defines the structure of a replication policy
@@ -46,6 +46,7 @@ type Policy struct {
 	CreationTime              time.Time       `json:"creation_time"`
 	UpdateTime                time.Time       `json:"update_time"`
 	Speed                     int32           `json:"speed"`
+	CopyByChunk               bool            `json:"copy_by_chunk"`
 }
 
 // IsScheduledTrigger returns true when the policy is scheduled trigger and enabled
@@ -90,7 +91,7 @@ func (p *Policy) Validate() error {
 	if len(p.DestNamespace) > 0 {
 		if !lib.RepositoryNameRe.MatchString(p.DestNamespace) {
 			return errors.New(nil).WithCode(errors.BadRequestCode).
-				WithMessage("invalid destination namespace: %s", p.DestNamespace)
+				WithMessagef("invalid destination namespace: %s", p.DestNamespace)
 		}
 	}
 
@@ -101,11 +102,18 @@ func (p *Policy) Validate() error {
 		case model.TriggerTypeScheduled:
 			if p.Trigger.Settings == nil || len(p.Trigger.Settings.Cron) == 0 {
 				return errors.New(nil).WithCode(errors.BadRequestCode).
-					WithMessage("the cron string cannot be empty when the trigger type is %s", model.TriggerTypeScheduled)
+					WithMessagef("the cron string cannot be empty when the trigger type is %s", model.TriggerTypeScheduled)
 			}
-			if _, err := cron.Parse(p.Trigger.Settings.Cron); err != nil {
+			if _, err := utils.CronParser().Parse(p.Trigger.Settings.Cron); err != nil {
 				return errors.New(nil).WithCode(errors.BadRequestCode).
-					WithMessage("invalid cron string for scheduled trigger: %s", p.Trigger.Settings.Cron)
+					WithMessagef("invalid cron string for scheduled trigger: %s", p.Trigger.Settings.Cron)
+			}
+			cronParts := strings.Split(p.Trigger.Settings.Cron, " ")
+			if cronParts[0] != "0" {
+				return errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("the 1st field (indicating Seconds of time) of the cron setting must be 0")
+			}
+			if cronParts[1] == "*" {
+				return errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("* is not allowed for the Minutes field of the cron setting of replication policy")
 			}
 		default:
 			return errors.New(nil).WithCode(errors.BadRequestCode).
@@ -132,6 +140,7 @@ func (p *Policy) From(policy *replicationmodel.Policy) error {
 	p.CreationTime = policy.CreationTime
 	p.UpdateTime = policy.UpdateTime
 	p.Speed = policy.Speed
+	p.CopyByChunk = policy.CopyByChunk
 
 	if policy.SrcRegistryID > 0 {
 		p.SrcRegistry = &model.Registry{
@@ -176,6 +185,7 @@ func (p *Policy) To() (*replicationmodel.Policy, error) {
 		CreationTime:              p.CreationTime,
 		UpdateTime:                p.UpdateTime,
 		Speed:                     p.Speed,
+		CopyByChunk:               p.CopyByChunk,
 	}
 	if p.SrcRegistry != nil {
 		policy.SrcRegistryID = p.SrcRegistry.ID
