@@ -23,9 +23,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/repository/model"
 )
 
-// Mgr is the global repository manager instance
-var Mgr = New()
-
 // Manager is used for repository management
 type Manager interface {
 	// Count returns the total count of repositories according to the query
@@ -86,7 +83,7 @@ func (m *manager) GetByName(ctx context.Context, name string) (repository *model
 	}
 	if len(repositories) == 0 {
 		return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-			WithMessage("repository %s not found", name)
+			WithMessagef("repository %s not found", name)
 	}
 	return repositories[0], nil
 }

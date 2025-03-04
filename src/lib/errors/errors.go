@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"github.com/goharbor/harbor/src/lib/log"
 )
 
@@ -62,9 +63,15 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// WithMessage ...
-func (e *Error) WithMessage(format string, v ...interface{}) *Error {
+// WithMessagef ...
+func (e *Error) WithMessagef(format string, v ...interface{}) *Error {
 	e.Message = fmt.Sprintf(format, v...)
+	return e
+}
+
+// WithMessage ...
+func (e *Error) WithMessage(message string) *Error {
+	e.Message = message
 	return e
 }
 
@@ -130,8 +137,6 @@ func New(in interface{}) *Error {
 	switch in := in.(type) {
 	case error:
 		err = in
-	case *Error:
-		err = in.Cause
 	default:
 		err = fmt.Errorf("%v", in)
 	}

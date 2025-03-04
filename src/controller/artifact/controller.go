@@ -19,24 +19,29 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	accessorymodel "github.com/goharbor/harbor/src/pkg/accessory/model"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/opencontainers/go-digest"
+
+	"github.com/goharbor/harbor/src/controller/artifact/processor"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/chart"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/cnab"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/image"
-	"github.com/goharbor/harbor/src/lib/icon"
-
-	"github.com/goharbor/harbor/src/controller/artifact/processor"
+	"github.com/goharbor/harbor/src/controller/artifact/processor/sbom"
+	"github.com/goharbor/harbor/src/controller/artifact/processor/wasm"
 	"github.com/goharbor/harbor/src/controller/event/metadata"
 	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/icon"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/accessory"
+	accessorymodel "github.com/goharbor/harbor/src/pkg/accessory/model"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/artifactrash"
 	"github.com/goharbor/harbor/src/pkg/artifactrash/model"
@@ -48,14 +53,15 @@ import (
 	"github.com/goharbor/harbor/src/pkg/notifier/event"
 	"github.com/goharbor/harbor/src/pkg/registry"
 	"github.com/goharbor/harbor/src/pkg/repository"
-	"github.com/goharbor/harbor/src/pkg/signature"
 	model_tag "github.com/goharbor/harbor/src/pkg/tag/model/tag"
-	"github.com/opencontainers/go-digest"
 )
 
 var (
 	// Ctl is a global artifact controller instance
-	Ctl = NewController()
+	Ctl                 = NewController()
+	skippedContentTypes = map[string]struct{}{
+		"application/vnd.in-toto+json": {},
+	}
 )
 
 var (
@@ -70,6 +76,8 @@ var (
 		image.ArtifactTypeImage: icon.DigestOfIconImage,
 		chart.ArtifactTypeChart: icon.DigestOfIconChart,
 		cnab.ArtifactTypeCNAB:   icon.DigestOfIconCNAB,
+		wasm.ArtifactTypeWASM:   icon.DigestOfIconWASM,
+		sbom.ArtifactTypeSBOM:   icon.DigestOfIconAccSBOM,
 	}
 )
 
@@ -108,17 +116,20 @@ type Controller interface {
 	RemoveLabel(ctx context.Context, artifactID int64, labelID int64) (err error)
 	// Walk walks the artifact tree rooted at root, calling walkFn for each artifact in the tree, including root.
 	Walk(ctx context.Context, root *Artifact, walkFn func(*Artifact) error, option *Option) error
+	// HasUnscannableLayer check artifact with digest if has unscannable layer
+	HasUnscannableLayer(ctx context.Context, dgst string) (bool, error)
+	// ListWithLatest list the artifacts when the latest_in_repository in the query was set
+	ListWithLatest(ctx context.Context, query *q.Query, option *Option) (artifacts []*Artifact, err error)
 }
 
 // NewController creates an instance of the default artifact controller
 func NewController() Controller {
 	return &controller{
 		tagCtl:       tag.Ctl,
-		repoMgr:      repository.Mgr,
-		artMgr:       artifact.Mgr,
+		repoMgr:      pkg.RepositoryMgr,
+		artMgr:       pkg.ArtifactMgr,
 		artrashMgr:   artifactrash.Mgr,
 		blobMgr:      blob.Mgr,
-		sigMgr:       signature.GetManager(),
 		labelMgr:     label.Mgr,
 		immutableMtr: rule.NewRuleMatcher(),
 		regCli:       registry.Cli,
@@ -133,7 +144,6 @@ type controller struct {
 	artMgr       artifact.Manager
 	artrashMgr   artifactrash.Manager
 	blobMgr      blob.Manager
-	sigMgr       signature.Manager
 	labelMgr     label.Manager
 	immutableMtr match.ImmutableTagMatcher
 	regCli       registry.Client
@@ -143,7 +153,7 @@ type controller struct {
 
 type ArtOption struct {
 	Tags []string
-	Accs []accessorymodel.AccessoryData
+	Accs []*accessorymodel.AccessoryData
 }
 
 func (c *controller) Ensure(ctx context.Context, repository, digest string, option *ArtOption) (bool, int64, error) {
@@ -153,26 +163,28 @@ func (c *controller) Ensure(ctx context.Context, repository, digest string, opti
 	}
 	if option != nil {
 		for _, tag := range option.Tags {
-			if err = c.tagCtl.Ensure(ctx, artifact.RepositoryID, artifact.ID, tag); err != nil {
+			if _, err = c.tagCtl.Ensure(ctx, artifact.RepositoryID, artifact.ID, tag); err != nil {
 				return false, 0, err
 			}
 		}
 		for _, acc := range option.Accs {
-			if err = c.accessoryMgr.Ensure(ctx, artifact.ID, acc.ArtifactID, acc.Size, acc.Digest, acc.Type); err != nil {
+			if err = c.accessoryMgr.Ensure(ctx, artifact.Digest, artifact.RepositoryName, artifact.ID, acc.ArtifactID, acc.Size, acc.Digest, acc.Type); err != nil {
 				return false, 0, err
 			}
 		}
 	}
-	// fire event
-	e := &metadata.PushArtifactEventMetadata{
-		Ctx:      ctx,
-		Artifact: artifact,
-	}
+	if created {
+		// fire event for create
+		e := &metadata.PushArtifactEventMetadata{
+			Ctx:      ctx,
+			Artifact: artifact,
+		}
 
-	if option != nil && len(option.Tags) > 0 {
-		e.Tag = option.Tags[0]
+		if option != nil && len(option.Tags) > 0 {
+			e.Tag = option.Tags[0]
+		}
+		notification.AddEvent(ctx, e)
 	}
-	notification.AddEvent(ctx, e)
 	return created, artifact.ID, nil
 }
 
@@ -226,6 +238,7 @@ func (c *controller) ensureArtifact(ctx context.Context, repository, digest stri
 		if !errors.IsConflictErr(err) {
 			return false, nil, err
 		}
+		log.Debugf("failed to create artifact %s@%s: %v", repository, digest, err)
 		// if got conflict error, try to get the artifact again
 		artifact, err = c.artMgr.GetByDigest(ctx, repository, digest)
 		if err != nil {
@@ -247,15 +260,8 @@ func (c *controller) List(ctx context.Context, query *q.Query, option *Option) (
 	}
 
 	var res []*Artifact
-	// Only the displayed accessory will in the artifact list
 	for _, art := range arts {
-		accs, err := c.accessoryMgr.List(ctx, q.New(q.KeyWords{"ArtifactID": art.ID, "digest": art.Digest}))
-		if err != nil {
-			return nil, err
-		}
-		if len(accs) == 0 || (len(accs) > 0 && accs[0].Display()) {
-			res = append(res, c.assembleArtifact(ctx, art, option))
-		}
+		res = append(res, c.assembleArtifact(ctx, art, option))
 	}
 	return res, nil
 }
@@ -301,7 +307,7 @@ func (c *controller) getByTag(ctx context.Context, repository, tag string, optio
 	}
 	if len(tags) == 0 {
 		return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-			WithMessage("artifact %s:%s not found", repository, tag)
+			WithMessagef("artifact %s:%s not found", repository, tag)
 	}
 	return c.Get(ctx, tags[0].ArtifactID, option)
 }
@@ -320,19 +326,13 @@ func (c *controller) Delete(ctx context.Context, id int64) error {
 // the error handling logic for the root parent artifact and others is different
 // "isAccessory" is used to specify whether the artifact is an accessory.
 func (c *controller) deleteDeeply(ctx context.Context, id int64, isRoot, isAccessory bool) error {
-	art, err := c.Get(ctx, id, &Option{WithTag: true, WithAccessory: true})
+	art, err := c.Get(ctx, id, &Option{WithTag: true, WithAccessory: true, WithLabel: true})
 	if err != nil {
 		// return nil if the nonexistent artifact isn't the root parent
 		if !isRoot && errors.IsErr(err, errors.NotFoundCode) {
 			return nil
 		}
 		return err
-	}
-
-	if isAccessory {
-		if err := c.accessoryMgr.DeleteAccessories(ctx, q.New(q.KeyWords{"ArtifactID": art.ID, "Digest": art.Digest})); err != nil && !errors.IsErr(err, errors.NotFoundCode) {
-			return err
-		}
 	}
 
 	// the child artifact is referenced by some tags, skip
@@ -357,11 +357,26 @@ func (c *controller) deleteDeeply(ctx context.Context, id int64, isRoot, isAcces
 		return nil
 	}
 
+	if isAccessory {
+		if err := c.accessoryMgr.DeleteAccessories(ctx, q.New(q.KeyWords{"ArtifactID": art.ID, "Digest": art.Digest})); err != nil && !errors.IsErr(err, errors.NotFoundCode) {
+			return err
+		}
+	}
+
 	// delete accessories if contains any
 	for _, acc := range art.Accessories {
 		// only hard ref accessory should be removed
 		if acc.IsHard() {
-			if err = c.deleteDeeply(ctx, acc.GetData().ArtifactID, true, true); err != nil {
+			// if this acc artifact has parent(is child), set isRoot to false
+			parents, err := c.artMgr.ListReferences(ctx, &q.Query{
+				Keywords: map[string]interface{}{
+					"ChildID": acc.GetData().ArtifactID,
+				},
+			})
+			if err != nil {
+				return err
+			}
+			if err = c.deleteDeeply(ctx, acc.GetData().ArtifactID, len(parents) == 0, true); err != nil {
 				return err
 			}
 		}
@@ -374,7 +389,12 @@ func (c *controller) deleteDeeply(ctx context.Context, id int64, isRoot, isAcces
 			!errors.IsErr(err, errors.NotFoundCode) {
 			return err
 		}
-		if err = c.deleteDeeply(ctx, reference.ChildID, false, false); err != nil {
+		// if the child artifact is an accessory, set isAccessory to true
+		accs, err := c.accessoryMgr.List(ctx, q.New(q.KeyWords{"ArtifactID": reference.ChildID}))
+		if err != nil {
+			return err
+		}
+		if err = c.deleteDeeply(ctx, reference.ChildID, false, len(accs) > 0); err != nil {
 			return err
 		}
 	}
@@ -430,14 +450,20 @@ func (c *controller) deleteDeeply(ctx context.Context, id int64, isRoot, isAcces
 
 	// only fire event for the root parent artifact
 	if isRoot {
-		var tags []string
+		var tags, labels []string
 		for _, tag := range art.Tags {
 			tags = append(tags, tag.Name)
 		}
+
+		for _, label := range art.Labels {
+			labels = append(labels, label.Name)
+		}
+
 		notification.AddEvent(ctx, &metadata.DeleteArtifactEventMetadata{
 			Ctx:      ctx,
 			Artifact: &art.Artifact,
 			Tags:     tags,
+			Labels:   labels,
 		})
 	}
 
@@ -445,7 +471,7 @@ func (c *controller) deleteDeeply(ctx context.Context, id int64, isRoot, isAcces
 }
 
 func (c *controller) Copy(ctx context.Context, srcRepo, reference, dstRepo string) (int64, error) {
-	dstAccs := make([]accessorymodel.AccessoryData, 0)
+	dstAccs := make([]*accessorymodel.AccessoryData, 0)
 	return c.copyDeeply(ctx, srcRepo, reference, dstRepo, true, false, &dstAccs)
 }
 
@@ -453,7 +479,7 @@ func (c *controller) Copy(ctx context.Context, srcRepo, reference, dstRepo strin
 // this bypass our own logic(ensure, fire event, etc.) inside the registry handlers,
 // these logic must be covered explicitly here.
 // "copyDeeply" iterates the child artifacts and copy them first
-func (c *controller) copyDeeply(ctx context.Context, srcRepo, reference, dstRepo string, isRoot, isAcc bool, dstAccs *[]accessorymodel.AccessoryData) (int64, error) {
+func (c *controller) copyDeeply(ctx context.Context, srcRepo, reference, dstRepo string, isRoot, isAcc bool, dstAccs *[]*accessorymodel.AccessoryData) (int64, error) {
 	var option *Option
 	option = &Option{WithTag: true, WithAccessory: true}
 	if isAcc {
@@ -491,17 +517,32 @@ func (c *controller) copyDeeply(ctx context.Context, srcRepo, reference, dstRepo
 
 	// copy accessory if contains any
 	for _, acc := range srcArt.Accessories {
+		accs, err := c.accessoryMgr.List(ctx, q.New(q.KeyWords{"SubjectArtifactRepo": srcRepo, "SubjectArtifactDigest": acc.GetData().Digest}))
+		if err != nil {
+			return 0, err
+		}
+		// copy the fork which root is the accessory self with a temp array
+		// to avoid infinite recursion, disable this part in UT.
+		if os.Getenv("UTTEST") != "true" {
+			if len(accs) > 0 {
+				tmpDstAccs := make([]*accessorymodel.AccessoryData, 0)
+				_, err = c.copyDeeply(ctx, srcRepo, acc.GetData().Digest, dstRepo, true, false, &tmpDstAccs)
+				if err != nil {
+					return 0, err
+				}
+			}
+		}
+		dstAcc := &accessorymodel.AccessoryData{
+			Digest: acc.GetData().Digest,
+			Type:   acc.GetData().Type,
+			Size:   acc.GetData().Size,
+		}
+		*dstAccs = append(*dstAccs, dstAcc)
 		id, err := c.copyDeeply(ctx, srcRepo, acc.GetData().Digest, dstRepo, false, true, dstAccs)
 		if err != nil {
 			return 0, err
 		}
-		dstAcc := accessorymodel.AccessoryData{
-			ArtifactID: id,
-			Digest:     acc.GetData().Digest,
-			Type:       acc.GetData().Type,
-			Size:       acc.GetData().Size,
-		}
-		*dstAccs = append(*dstAccs, dstAcc)
+		dstAcc.ArtifactID = id
 	}
 
 	// copy the parent artifact into the backend docker registry
@@ -518,7 +559,9 @@ ensureArt:
 	// ensure the parent artifact exist in the database
 	artopt := &ArtOption{
 		Tags: tags,
-		Accs: *dstAccs,
+	}
+	if !isAcc {
+		artopt.Accs = *dstAccs
 	}
 	_, id, err := c.Ensure(ctx, dstRepo, digest, artopt)
 	if err != nil {
@@ -531,19 +574,24 @@ func (c *controller) UpdatePullTime(ctx context.Context, artifactID int64, tagID
 	if err := c.artMgr.UpdatePullTime(ctx, artifactID, time); err != nil {
 		return err
 	}
-	tg, err := c.tagCtl.Get(ctx, tagID, nil)
-	if err != nil {
-		return err
+	// update tag pull time if artifact has tag
+	if tagID != 0 {
+		tg, err := c.tagCtl.Get(ctx, tagID, nil)
+		if err != nil {
+			return err
+		}
+		if tg.ArtifactID != artifactID {
+			return fmt.Errorf("tag %d isn't attached to artifact %d", tagID, artifactID)
+		}
+		return c.tagCtl.Update(ctx, &tag.Tag{
+			Tag: model_tag.Tag{
+				ID:       tg.ID,
+				PullTime: time,
+			},
+		}, "PullTime")
 	}
-	if tg.ArtifactID != artifactID {
-		return fmt.Errorf("tag %d isn't attached to artifact %d", tagID, artifactID)
-	}
-	return c.tagCtl.Update(ctx, &tag.Tag{
-		Tag: model_tag.Tag{
-			ID:       tg.ID,
-			PullTime: time,
-		},
-	}, "PullTime")
+
+	return nil
 }
 
 func (c *controller) GetAddition(ctx context.Context, artifactID int64, addition string) (*processor.Addition, error) {
@@ -564,8 +612,8 @@ func (c *controller) AddLabel(ctx context.Context, artifactID int64, labelID int
 				LabelID:    labelID,
 				Ctx:        ctx,
 			}
-			if err := e.Build(metaData); err == nil {
-				if err := e.Publish(); err != nil {
+			if err := e.Build(ctx, metaData); err == nil {
+				if err := e.Publish(ctx); err != nil {
 					log.Error(errors.Wrap(err, "mark label to resource handler: event publish"))
 				}
 			} else {
@@ -620,23 +668,28 @@ func (c *controller) Walk(ctx context.Context, root *Artifact, walkFn func(*Arti
 				if !walked[child.Digest] {
 					queue.PushBack(child)
 				}
+				if len(child.Accessories) != 0 {
+					for _, acc := range child.Accessories {
+						accArt, err := c.Get(ctx, acc.GetData().ArtifactID, option)
+						if err != nil {
+							return err
+						}
+						if !walked[accArt.Digest] {
+							queue.PushBack(accArt)
+						}
+					}
+				}
 			}
 		}
 
 		if len(artifact.Accessories) > 0 {
-			var ids []int64
 			for _, acc := range artifact.Accessories {
-				ids = append(ids, acc.GetData().ArtifactID)
-			}
-
-			children, err := c.List(ctx, q.New(q.KeyWords{"id__in": ids, "base": "*"}), option)
-			if err != nil {
-				return err
-			}
-
-			for _, child := range children {
-				if !walked[child.Digest] {
-					queue.PushBack(child)
+				accArt, err := c.Get(ctx, acc.GetData().ArtifactID, option)
+				if err != nil {
+					return err
+				}
+				if !walked[accArt.Digest] {
+					queue.PushBack(accArt)
 				}
 			}
 		}
@@ -720,4 +773,35 @@ func (c *controller) populateAccessories(ctx context.Context, art *Artifact) {
 		return
 	}
 	art.Accessories = accs
+}
+
+// HasUnscannableLayer check if it is a in-toto sbom, if it contains any blob with a content_type is application/vnd.in-toto+json, then consider as in-toto sbom
+func (c *controller) HasUnscannableLayer(ctx context.Context, dgst string) (bool, error) {
+	if len(dgst) == 0 {
+		return false, nil
+	}
+	blobs, err := c.blobMgr.GetByArt(ctx, dgst)
+	if err != nil {
+		return false, err
+	}
+	for _, b := range blobs {
+		if _, exist := skippedContentTypes[b.ContentType]; exist {
+			log.Debugf("the artifact with digest %v is unscannable, because it contains content type: %v", dgst, b.ContentType)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ListWithLatest ...
+func (c *controller) ListWithLatest(ctx context.Context, query *q.Query, option *Option) (artifacts []*Artifact, err error) {
+	arts, err := c.artMgr.ListWithLatest(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	var res []*Artifact
+	for _, art := range arts {
+		res = append(res, c.assembleArtifact(ctx, art, option))
+	}
+	return res, nil
 }

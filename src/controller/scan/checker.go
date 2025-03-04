@@ -16,6 +16,7 @@ package scan
 
 import (
 	"context"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/image"
 	"github.com/goharbor/harbor/src/controller/scanner"
@@ -83,6 +84,18 @@ func (c *checker) IsScannable(ctx context.Context, art *artifact.Artifact) (bool
 		if hasCapability(r, a) {
 			scannable = true
 			return artifact.ErrBreak
+		}
+
+		// because there are lots of in-toto sbom artifacts in dockerhub and replicated to Harbor, they are considered as image type
+		// when scanning these type of sbom artifact, the scanner might assume it is image layer with tgz format, and if scanner read the layer with a stream of tgz,
+		// it fail and close the stream abruptly and cause the pannic in the harbor core log
+		// to avoid pannic, skip scan the in-toto sbom artifact sbom artifact
+		unscannable, err := c.artifactCtl.HasUnscannableLayer(ctx, a.Digest)
+		if err != nil {
+			return err
+		}
+		if unscannable {
+			return nil
 		}
 
 		return nil

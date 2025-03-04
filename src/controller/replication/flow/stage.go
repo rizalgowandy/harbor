@@ -19,9 +19,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/goharbor/harbor/src/lib/errors"
-
 	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
+	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
@@ -57,57 +56,16 @@ func initialize(policy *repctlmodel.Policy) (adp.Adapter, adp.Adapter, error) {
 
 // fetch resources from the source registry
 func fetchResources(adapter adp.Adapter, policy *repctlmodel.Policy) ([]*model.Resource, error) {
-	var resTypes []string
-	for _, filter := range policy.Filters {
-		if filter.Type == model.FilterTypeResource {
-			resTypes = append(resTypes, filter.Value.(string))
-		}
-	}
-	if len(resTypes) == 0 {
-		info, err := adapter.Info()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get the adapter info: %v", err)
-		}
-		resTypes = append(resTypes, info.SupportedResourceTypes...)
-	}
-
-	fetchArtifact := false
-	fetchChart := false
-	for _, resType := range resTypes {
-		if resType == model.ResourceTypeChart {
-			fetchChart = true
-			continue
-		}
-		fetchArtifact = true
-	}
-
 	var resources []*model.Resource
-	// artifacts
-	if fetchArtifact {
-		reg, ok := adapter.(adp.ArtifactRegistry)
-		if !ok {
-			return nil, fmt.Errorf("the adapter doesn't implement the ArtifactRegistry interface")
-		}
-		res, err := reg.FetchArtifacts(policy.Filters)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch artifacts: %v", err)
-		}
-		resources = append(resources, res...)
-		log.Debug("fetch artifacts completed")
+	reg, ok := adapter.(adp.ArtifactRegistry)
+	if !ok {
+		return nil, fmt.Errorf("the adapter doesn't implement the ArtifactRegistry interface")
 	}
-	// charts
-	if fetchChart {
-		reg, ok := adapter.(adp.ChartRegistry)
-		if !ok {
-			return nil, fmt.Errorf("the adapter doesn't implement the ChartRegistry interface")
-		}
-		res, err := reg.FetchCharts(policy.Filters)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch charts: %v", err)
-		}
-		resources = append(resources, res...)
-		log.Debug("fetch charts completed")
+	res, err := reg.FetchArtifacts(policy.Filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch artifacts: %v", err)
 	}
+	resources = append(resources, res...)
 
 	log.Debug("fetch resources from the source registry completed")
 	return resources, nil
@@ -194,6 +152,37 @@ func getResourceName(res *model.Resource) string {
 	return fmt.Sprintf("%s [%d item(s) in total]", meta.Repository.Name, n)
 }
 
+// getResourceReferences gets the string lists of the resource reference, use tag name first or digest if no tag
+// e.g v1,v2,dev,sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+func getResourceReferences(res *model.Resource) string {
+	if res == nil {
+		return ""
+	}
+	meta := res.Metadata
+	if meta == nil {
+		return ""
+	}
+
+	references := make([]string, 0)
+	if len(meta.Artifacts) > 0 {
+		for _, artifact := range meta.Artifacts {
+			// contains tags
+			if len(artifact.Tags) > 0 {
+				references = append(references, artifact.Tags...)
+				continue
+			}
+			// contains no tag, use digest
+			if len(artifact.Digest) > 0 {
+				references = append(references, artifact.Digest)
+			}
+		}
+	} else {
+		references = append(references, meta.Vtags...)
+	}
+
+	return strings.Join(references, ",")
+}
+
 // repository:a/b/c/image namespace:n replaceCount: -1 -> n/image
 // repository:a/b/c/image namespace:n replaceCount: 0 -> n/a/b/c/image
 // repository:a/b/c/image namespace:n replaceCount: 1 -> n/b/c/image
@@ -214,7 +203,7 @@ func replaceNamespace(repository string, namespace string, replaceCount int8, ds
 		dstRepoPrefix = namespace
 	case int(replaceCount) > srcLength-1: // invalid replace count
 		return "", errors.New(nil).WithCode(errors.BadRequestCode).
-			WithMessage("the source repository %q contains only %d path components %v excepting the last one, but the destination namespace flattening level is %d",
+			WithMessagef("the source repository %q contains only %d path components %v excepting the last one, but the destination namespace flattening level is %d",
 				repository, srcLength-1, srcRepoPathComponents[:srcLength-1], replaceCount)
 	default:
 		dstRepoPrefix = namespace + "/" + strings.Join(srcRepoPathComponents[replaceCount:srcLength-1], "/")
@@ -227,12 +216,12 @@ func replaceNamespace(repository string, namespace string, replaceCount int8, ds
 	switch dstRepoComponentPathType {
 	case model.RepositoryPathComponentTypeOnlyTwo:
 		if dstLength != 2 {
-			return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("the destination repository %q contains %d path components %v, but the destination registry only supports 2",
+			return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("the destination repository %q contains %d path components %v, but the destination registry only supports 2",
 				dstRepo, dstLength, dstRepoPathComponents)
 		}
 	case model.RepositoryPathComponentTypeAtLeastTwo:
 		if dstLength < 2 {
-			return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("the destination repository %q contains only %d path components %v, but the destination registry requires at least 2",
+			return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("the destination repository %q contains only %d path components %v, but the destination registry requires at least 2",
 				dstRepo, dstLength, dstRepoPathComponents)
 		}
 	}

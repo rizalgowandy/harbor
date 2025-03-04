@@ -1,20 +1,32 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package client
 
 import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	common_http "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider/auth"
-
-	common_http "github.com/goharbor/harbor/src/common/http"
 )
 
 const (
@@ -72,7 +84,7 @@ func NewHTTPClient(insecure bool) *HTTPClient {
 // Get content from the url
 func (hc *HTTPClient) Get(url string, cred *auth.Credential, parmas map[string]string, options map[string]string) ([]byte, error) {
 	bytes, err := hc.get(url, cred, parmas, options)
-	logMsg := fmt.Sprintf("Get %s with cred=%v, params=%v, options=%v", url, cred, parmas, options)
+	logMsg := fmt.Sprintf("Get %s with params=%v, options=%v", url, parmas, options)
 	if err != nil {
 		log.Errorf("%s: %s", logMsg, err)
 	} else {
@@ -121,7 +133,7 @@ func (hc *HTTPClient) get(url string, cred *auth.Credential, parmas map[string]s
 
 	// If failed, read error message; if succeeded, read content.
 	defer res.Body.Close()
-	bytes, err := ioutil.ReadAll(res.Body)
+	bytes, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +199,7 @@ func (hc *HTTPClient) post(url string, cred *auth.Credential, body interface{}, 
 	}
 
 	defer res.Body.Close()
-	bytes, err := ioutil.ReadAll(res.Body)
+	bytes, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}

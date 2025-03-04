@@ -16,12 +16,13 @@ package quota
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/goharbor/harbor/src/controller/event/metadata"
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/quota"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -49,7 +50,7 @@ var (
 	unmarshalManifest = func(r *http.Request) (distribution.Manifest, distribution.Descriptor, error) {
 		lib.NopCloseRequest(r)
 
-		body, err := ioutil.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			return nil, distribution.Descriptor{}, err
 		}
@@ -60,7 +61,7 @@ var (
 )
 
 func projectResourcesEvent(level int) func(*http.Request, string, string, string) event.Metadata {
-	return func(r *http.Request, reference, referenceID string, message string) event.Metadata {
+	return func(r *http.Request, _, referenceID string, message string) event.Metadata {
 		ctx := r.Context()
 
 		logger := log.G(ctx).WithFields(log.Fields{"middleware": "quota", "action": "request", "url": r.URL.Path})
@@ -100,6 +101,7 @@ func projectResourcesEvent(level int) func(*http.Request, string, string, string
 			Level:    level,
 			Msg:      message,
 			OccurAt:  time.Now(),
+			Operator: operator.FromContext(ctx),
 		}
 	}
 }

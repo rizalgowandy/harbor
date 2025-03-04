@@ -18,20 +18,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	pkg_artifact "github.com/goharbor/harbor/src/pkg/artifact"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"github.com/goharbor/harbor/src/pkg/tag/model/tag"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
+	"github.com/goharbor/harbor/src/testing/mock"
 	"github.com/goharbor/harbor/src/testing/pkg/artifact"
 	"github.com/goharbor/harbor/src/testing/pkg/immutable"
 	"github.com/goharbor/harbor/src/testing/pkg/repository"
 	tagtesting "github.com/goharbor/harbor/src/testing/pkg/tag"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type controllerTestSuite struct {
@@ -39,30 +38,25 @@ type controllerTestSuite struct {
 	ctl          *controller
 	repoMgr      *repository.Manager
 	artMgr       *artifact.Manager
-	tagMgr       *tagtesting.FakeManager
+	tagMgr       *tagtesting.Manager
 	immutableMtr *immutable.FakeMatcher
 }
 
 func (c *controllerTestSuite) SetupTest() {
 	c.repoMgr = &repository.Manager{}
 	c.artMgr = &artifact.Manager{}
-	c.tagMgr = &tagtesting.FakeManager{}
+	c.tagMgr = &tagtesting.Manager{}
 	c.immutableMtr = &immutable.FakeMatcher{}
 	c.ctl = &controller{
 		tagMgr:       c.tagMgr,
 		artMgr:       c.artMgr,
 		immutableMtr: c.immutableMtr,
 	}
-
-	var tagCtlTestConfig = map[string]interface{}{
-		common.WithNotary: false,
-	}
-	config.InitWithSettings(tagCtlTestConfig)
 }
 
 func (c *controllerTestSuite) TestEnsureTag() {
 	// the tag already exists under the repository and is attached to the artifact
-	c.tagMgr.On("List").Return([]*tag.Tag{
+	c.tagMgr.On("List", mock.Anything, mock.Anything).Return([]*tag.Tag{
 		{
 			ID:           1,
 			RepositoryID: 1,
@@ -73,8 +67,8 @@ func (c *controllerTestSuite) TestEnsureTag() {
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
 		ID: 1,
 	}, nil)
-	c.immutableMtr.On("Match").Return(false, nil)
-	err := c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
+	mock.OnAnything(c.immutableMtr, "Match").Return(false, nil)
+	_, err := c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
 	c.Require().Nil(err)
 	c.tagMgr.AssertExpectations(c.T())
 
@@ -82,7 +76,7 @@ func (c *controllerTestSuite) TestEnsureTag() {
 	c.SetupTest()
 
 	// the tag exists under the repository, but it is attached to other artifact
-	c.tagMgr.On("List").Return([]*tag.Tag{
+	c.tagMgr.On("List", mock.Anything, mock.Anything).Return([]*tag.Tag{
 		{
 			ID:           1,
 			RepositoryID: 1,
@@ -90,12 +84,12 @@ func (c *controllerTestSuite) TestEnsureTag() {
 			Name:         "latest",
 		},
 	}, nil)
-	c.tagMgr.On("Update").Return(nil)
+	c.tagMgr.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
 		ID: 1,
 	}, nil)
-	c.immutableMtr.On("Match").Return(false, nil)
-	err = c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
+	mock.OnAnything(c.immutableMtr, "Match").Return(false, nil)
+	_, err = c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
 	c.Require().Nil(err)
 	c.tagMgr.AssertExpectations(c.T())
 
@@ -103,26 +97,26 @@ func (c *controllerTestSuite) TestEnsureTag() {
 	c.SetupTest()
 
 	// the tag doesn't exist under the repository, create it
-	c.tagMgr.On("List").Return([]*tag.Tag{}, nil)
-	c.tagMgr.On("Create").Return(1, nil)
+	c.tagMgr.On("List", mock.Anything, mock.Anything).Return([]*tag.Tag{}, nil)
+	c.tagMgr.On("Create", mock.Anything, mock.Anything).Return(int64(1), nil)
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
 		ID: 1,
 	}, nil)
-	c.immutableMtr.On("Match").Return(false, nil)
-	err = c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
+	mock.OnAnything(c.immutableMtr, "Match").Return(false, nil)
+	_, err = c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
 	c.Require().Nil(err)
 	c.tagMgr.AssertExpectations(c.T())
 }
 
 func (c *controllerTestSuite) TestCount() {
-	c.tagMgr.On("Count").Return(1, nil)
+	c.tagMgr.On("Count", mock.Anything, mock.Anything).Return(int64(1), nil)
 	total, err := c.ctl.Count(nil, nil)
 	c.Require().Nil(err)
 	c.Equal(int64(1), total)
 }
 
 func (c *controllerTestSuite) TestList() {
-	c.tagMgr.On("List").Return([]*tag.Tag{
+	c.tagMgr.On("List", mock.Anything, mock.Anything).Return([]*tag.Tag{
 		{
 			RepositoryID: 1,
 			Name:         "testlist",
@@ -140,7 +134,7 @@ func (c *controllerTestSuite) TestGet() {
 	getTest.RepositoryID = 1
 	getTest.Name = "testget"
 
-	c.tagMgr.On("Get").Return(getTest, nil)
+	c.tagMgr.On("Get", mock.Anything, mock.Anything).Return(getTest, nil)
 	tag, err := c.ctl.Get(nil, 1, nil)
 	c.Require().Nil(err)
 	c.tagMgr.AssertExpectations(c.T())
@@ -149,36 +143,36 @@ func (c *controllerTestSuite) TestGet() {
 }
 
 func (c *controllerTestSuite) TestDelete() {
-	c.tagMgr.On("Get").Return(&tag.Tag{
+	c.tagMgr.On("Get", mock.Anything, mock.Anything).Return(&tag.Tag{
 		RepositoryID: 1,
 		Name:         "test",
 	}, nil)
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
 		ID: 1,
 	}, nil)
-	c.immutableMtr.On("Match").Return(false, nil)
-	c.tagMgr.On("Delete").Return(nil)
+	mock.OnAnything(c.immutableMtr, "Match").Return(false, nil)
+	c.tagMgr.On("Delete", mock.Anything, mock.Anything).Return(nil)
 	err := c.ctl.Delete(nil, 1)
 	c.Require().Nil(err)
 }
 
 func (c *controllerTestSuite) TestDeleteImmutable() {
-	c.tagMgr.On("Get").Return(&tag.Tag{
+	c.tagMgr.On("Get", mock.Anything, mock.Anything).Return(&tag.Tag{
 		RepositoryID: 1,
 		Name:         "test",
 	}, nil)
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
 		ID: 1,
 	}, nil)
-	c.immutableMtr.On("Match").Return(true, nil)
-	c.tagMgr.On("Delete").Return(nil)
+	mock.OnAnything(c.immutableMtr, "Match").Return(true, nil)
+	c.tagMgr.On("Delete", mock.Anything, mock.Anything).Return(nil)
 	err := c.ctl.Delete(nil, 1)
 	c.Require().NotNil(err)
 	c.True(errors.IsErr(err, errors.PreconditionCode))
 }
 
 func (c *controllerTestSuite) TestUpdate() {
-	c.tagMgr.On("Update").Return(nil)
+	mock.OnAnything(c.tagMgr, "Update").Return(nil)
 	err := c.ctl.Update(nil, &Tag{
 		Tag: tag.Tag{
 			RepositoryID: 1,
@@ -190,14 +184,14 @@ func (c *controllerTestSuite) TestUpdate() {
 }
 
 func (c *controllerTestSuite) TestDeleteTags() {
-	c.tagMgr.On("Get").Return(&tag.Tag{
+	c.tagMgr.On("Get", mock.Anything, mock.Anything).Return(&tag.Tag{
 		RepositoryID: 1,
 	}, nil)
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
 		ID: 1,
 	}, nil)
-	c.immutableMtr.On("Match").Return(false, nil)
-	c.tagMgr.On("Delete").Return(nil)
+	mock.OnAnything(c.immutableMtr, "Match").Return(false, nil)
+	c.tagMgr.On("Delete", mock.Anything, mock.Anything).Return(nil)
 	ids := []int64{1, 2, 3, 4}
 	err := c.ctl.DeleteTags(nil, ids)
 	c.Require().Nil(err)
@@ -224,7 +218,7 @@ func (c *controllerTestSuite) TestAssembleTag() {
 	}
 
 	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(art, nil)
-	c.immutableMtr.On("Match").Return(true, nil)
+	mock.OnAnything(c.immutableMtr, "Match").Return(true, nil)
 	tag := c.ctl.assembleTag(nil, tg, option)
 	c.Require().NotNil(tag)
 	c.Equal(tag.ID, tg.ID)
@@ -234,4 +228,30 @@ func (c *controllerTestSuite) TestAssembleTag() {
 
 func TestControllerTestSuite(t *testing.T) {
 	suite.Run(t, &controllerTestSuite{})
+}
+
+func Test_isValidTag(t *testing.T) {
+	type args struct {
+		name string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"normal", args{`latest`}, true},
+		{"invalid_char", args{`latest&delete`}, false},
+		{"invalid_start", args{`-abc`}, false},
+		{"invalid_start_&", args{`&asdf`}, false},
+		{"valid_start", args{`_abc`}, true},
+		{"pure_number", args{`123456`}, true},
+		{"empty", args{` `}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isValidTag(tt.args.name); got != tt.want {
+				t.Errorf("isValidTag() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

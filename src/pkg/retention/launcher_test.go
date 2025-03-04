@@ -16,13 +16,18 @@ package retention
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib/orm"
-	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/common/job"
+	"github.com/goharbor/harbor/src/lib/orm"
+	pq "github.com/goharbor/harbor/src/lib/q"
 	_ "github.com/goharbor/harbor/src/lib/selector/selectors/doublestar"
 	"github.com/goharbor/harbor/src/pkg/project"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/repository/model"
 	"github.com/goharbor/harbor/src/pkg/retention/policy"
 	"github.com/goharbor/harbor/src/pkg/retention/policy/rule"
@@ -32,13 +37,13 @@ import (
 	projecttesting "github.com/goharbor/harbor/src/testing/pkg/project"
 	"github.com/goharbor/harbor/src/testing/pkg/repository"
 	tasktesting "github.com/goharbor/harbor/src/testing/pkg/task"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 type fakeRetentionManager struct{}
 
+func (f *fakeRetentionManager) ListPolicyIDs(ctx context.Context, query *pq.Query) ([]int64, error) {
+	return nil, nil
+}
 func (f *fakeRetentionManager) GetTotalOfRetentionExecs(policyID int64) (int64, error) {
 	return 0, nil
 }

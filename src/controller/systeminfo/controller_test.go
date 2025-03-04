@@ -2,15 +2,16 @@ package systeminfo
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib/config"
-	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
-	htesting "github.com/goharbor/harbor/src/testing"
 	"testing"
 
-	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/goharbor/harbor/src/pkg/version"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/common"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/errors"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
+	"github.com/goharbor/harbor/src/pkg/version"
+	htesting "github.com/goharbor/harbor/src/testing"
 )
 
 type sysInfoCtlTestSuite struct {
@@ -30,8 +31,7 @@ func (s *sysInfoCtlTestSuite) SetupTest() {
 		common.RegistryStorageProviderName: "filesystem",
 		common.ReadOnly:                    false,
 		common.NotificationEnable:          false,
-		common.WithChartMuseum:             false,
-		common.WithNotary:                  true,
+		common.BannerMessage:               "{\"closable\":false,\"message\":\"Just for test\",\"type\":\" error\"}",
 	}
 
 	config.InitWithSettings(conf)
@@ -57,26 +57,25 @@ func (s *sysInfoCtlTestSuite) TestGetInfo() {
 			withProtected: false,
 			expect: Data{
 				AuthMode:         "db_auth",
-				HarborVersion:    "test-fakeid",
 				SelfRegistration: true,
+				BannerMessage:    "{\"closable\":false,\"message\":\"Just for test\",\"type\":\" error\"}",
 			},
 		},
 		{
 			withProtected: true,
 			expect: Data{
 				AuthMode:         "db_auth",
-				HarborVersion:    "test-fakeid",
 				SelfRegistration: true,
+				BannerMessage:    "{\"closable\":false,\"message\":\"Just for test\",\"type\":\" error\"}",
 				Protected: &protectedData{
-					WithNotary:              true,
 					RegistryURL:             "test.goharbor.io",
 					ExtURL:                  "https://test.goharbor.io",
+					HarborVersion:           "test-fakeid",
 					ProjectCreationRestrict: "everyone",
 					// CI pipeline has it
 					HasCARoot:                   true,
 					RegistryStorageProviderName: "filesystem",
 					ReadOnly:                    false,
-					WithChartMuseum:             false,
 					NotificationEnable:          false,
 				},
 			},
@@ -104,4 +103,26 @@ func (s *sysInfoCtlTestSuite) TestGetInfo() {
 
 func TestControllerSuite(t *testing.T) {
 	suite.Run(t, &sysInfoCtlTestSuite{})
+}
+
+func TestOIDCProviderName(t *testing.T) {
+	type args struct {
+		cfg map[string]interface{}
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"normal testing", args{map[string]interface{}{common.AUTHMode: common.OIDCAuth, common.OIDCName: "test"}}, "test"},
+		{"not oidc", args{map[string]interface{}{common.AUTHMode: common.DBAuth, common.OIDCName: "test"}}, ""},
+		{"empty provider", args{map[string]interface{}{common.AUTHMode: common.OIDCAuth, common.OIDCName: ""}}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := OIDCProviderName(tt.args.cfg); got != tt.want {
+				t.Errorf("OIDCProviderName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

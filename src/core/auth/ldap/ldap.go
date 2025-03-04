@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import (
 	"strings"
 
 	goldap "github.com/go-ldap/ldap/v3"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
@@ -35,6 +37,10 @@ import (
 	"github.com/goharbor/harbor/src/pkg/ldap/model"
 	"github.com/goharbor/harbor/src/pkg/user"
 	ugModel "github.com/goharbor/harbor/src/pkg/usergroup/model"
+)
+
+const (
+	workerCount = 5
 )
 
 // Auth implements AuthenticateHelper interface to authenticate against LDAP
@@ -105,35 +111,103 @@ func (l *Auth) attachLDAPGroup(ctx context.Context, ldapUsers []model.User, u *m
 	groupAdminDN := utils.TrimLower(groupCfg.AdminDN)
 	// Attach user group
 	for _, groupDN := range ldapUsers[0].GroupDNList {
-
 		groupDN = utils.TrimLower(groupDN)
 		// Attach LDAP group admin
 		if len(groupAdminDN) > 0 && groupAdminDN == groupDN {
 			u.AdminRoleInAuth = true
 		}
-
 	}
 	// skip to attach group when ldap_group_search_filter is empty
 	if len(groupCfg.Filter) == 0 {
 		return
 	}
 	userGroups := make([]ugModel.UserGroup, 0)
+	if groupCfg.AttachParallel {
+		log.Debug("Attach LDAP group in parallel")
+		l.attachGroupParallel(ctx, ldapUsers, u)
+		return
+	}
+	// Attach LDAP group sequencially
 	for _, dn := range ldapUsers[0].GroupDNList {
-		lGroups, err := sess.SearchGroupByDN(dn)
-		if err != nil {
-			log.Warningf("Can not get the ldap group name with DN %v, error %v", dn, err)
-			continue
+		if lgroup, exist := verifyGroupInLDAP(dn, sess); exist {
+			userGroups = append(userGroups, ugModel.UserGroup{GroupName: lgroup.Name, LdapGroupDN: dn, GroupType: common.LDAPGroupType})
 		}
-		if len(lGroups) == 0 {
-			log.Warningf("Can not get the ldap group name with DN %v", dn)
-			continue
-		}
-		userGroups = append(userGroups, ugModel.UserGroup{GroupName: lGroups[0].Name, LdapGroupDN: dn, GroupType: common.LDAPGroupType})
 	}
 	u.GroupIDs, err = ugCtl.Ctl.Populate(ctx, userGroups)
 	if err != nil {
-		log.Warningf("Failed to fetch ldap group configuration:%v", err)
+		log.Warningf("Failed to populate ldap group, error: %v", err)
 	}
+}
+
+func (l *Auth) attachGroupParallel(ctx context.Context, ldapUsers []model.User, u *models.User) {
+	userGroupsList := make([][]ugModel.UserGroup, workerCount)
+	gdsList := make([][]string, workerCount)
+	// Divide the groupDNs into workerCount parts
+	for index, dn := range ldapUsers[0].GroupDNList {
+		idx := index % workerCount
+		gdsList[idx] = append(gdsList[idx], dn)
+	}
+	g := new(errgroup.Group)
+	g.SetLimit(workerCount)
+
+	for i := 0; i < workerCount; i++ {
+		curIndex := i
+		g.Go(func() error {
+			userGroups := make([]ugModel.UserGroup, 0)
+			groups := gdsList[curIndex]
+			if len(groups) == 0 {
+				return nil
+			}
+			// use different ldap session for each go routine
+			ldapSession, err := ldapCtl.Ctl.Session(ctx)
+			if err != nil {
+				return err
+			}
+			if err = ldapSession.Open(); err != nil {
+				return err
+			}
+			defer ldapSession.Close()
+			log.Debugf("Current worker index is %v", curIndex)
+			// verify and populate group
+			for _, dn := range groups {
+				if lgroup, exist := verifyGroupInLDAP(dn, ldapSession); exist {
+					userGroups = append(userGroups, ugModel.UserGroup{GroupName: lgroup.Name, LdapGroupDN: dn, GroupType: common.LDAPGroupType})
+				}
+			}
+			userGroupsList[curIndex] = userGroups
+
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		log.Warningf("failed to verify and populate ldap group parallel, error %v", err)
+	}
+	ugs := make([]ugModel.UserGroup, 0)
+	for _, userGroups := range userGroupsList {
+		ugs = append(ugs, userGroups...)
+	}
+
+	groupIDsList, err := ugCtl.Ctl.Populate(ctx, ugs)
+	if err != nil {
+		log.Warningf("Failed to populate user groups :%v", err)
+	}
+	u.GroupIDs = groupIDsList
+}
+
+func verifyGroupInLDAP(groupDN string, sess *ldap.Session) (*model.Group, bool) {
+	if _, err := goldap.ParseDN(groupDN); err != nil {
+		return nil, false
+	}
+	lGroups, err := sess.SearchGroupByDN(groupDN)
+	if err != nil {
+		log.Warningf("Can not get the ldap group name with DN %v, error %v", groupDN, err)
+		return nil, false
+	}
+	if len(lGroups) == 0 {
+		log.Debugf("Can not get the ldap group name with DN %v", groupDN)
+		return nil, false
+	}
+	return &lGroups[0], true
 }
 
 func (l *Auth) syncUserInfoFromDB(ctx context.Context, u *models.User) {
@@ -182,14 +256,13 @@ func (l *Auth) SearchUser(ctx context.Context, username string) (*models.User, e
 		log.Warningf("There are more than one user found, return the first user")
 	}
 	if len(lUsers) > 0 {
-
 		user.Username = strings.TrimSpace(lUsers[0].Username)
 		user.Realname = strings.TrimSpace(lUsers[0].Realname)
 		user.Email = strings.TrimSpace(lUsers[0].Email)
 
 		log.Debugf("Found ldap user %v", user)
 	} else {
-		return nil, errors.NotFoundError(nil).WithMessage("no user found: %v", username)
+		return nil, errors.NotFoundError(nil).WithMessagef("no user found: %v", username)
 	}
 
 	return &user, nil
@@ -219,7 +292,7 @@ func (l *Auth) SearchGroup(ctx context.Context, groupKey string) (*ugModel.UserG
 	}
 
 	if len(userGroupList) == 0 {
-		return nil, errors.NotFoundError(nil).WithMessage("failed to searh ldap group with groupDN:%v", groupKey)
+		return nil, errors.NotFoundError(nil).WithMessagef("failed to searh ldap group with groupDN:%v", groupKey)
 	}
 	userGroup := ugModel.UserGroup{
 		GroupName:   userGroupList[0].Name,

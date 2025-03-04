@@ -19,15 +19,16 @@ import (
 	"testing"
 	"time"
 
-	beegoorm "github.com/astaxie/beego/orm"
+	beegoorm "github.com/beego/beego/v2/client/orm"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/suite"
+
 	common_dao "github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	tagdao "github.com/goharbor/harbor/src/pkg/tag/dao"
 	"github.com/goharbor/harbor/src/pkg/tag/model/tag"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/stretchr/testify/suite"
 )
 
 type daoTestSuite struct {
@@ -469,6 +470,75 @@ func (d *daoTestSuite) TestDeleteReferences() {
 	err := d.dao.DeleteReferences(d.ctx, 10000)
 	d.Require().NotNil(err)
 	d.True(errors.IsErr(err, errors.NotFoundCode))
+}
+
+func (d *daoTestSuite) TestListWithLatest() {
+	now := time.Now()
+	art := &Artifact{
+		Type:              "IMAGE",
+		MediaType:         v1.MediaTypeImageConfig,
+		ManifestMediaType: v1.MediaTypeImageIndex,
+		ProjectID:         1234,
+		RepositoryID:      1234,
+		RepositoryName:    "library2/hello-world1",
+		Digest:            "digest",
+		PushTime:          now,
+		PullTime:          now,
+		Annotations:       `{"anno1":"value1"}`,
+	}
+	id, err := d.dao.Create(d.ctx, art)
+	d.Require().Nil(err)
+
+	time.Sleep(1 * time.Second)
+	now = time.Now()
+
+	art2 := &Artifact{
+		Type:              "IMAGE",
+		MediaType:         v1.MediaTypeImageConfig,
+		ManifestMediaType: v1.MediaTypeImageIndex,
+		ProjectID:         1234,
+		RepositoryID:      1235,
+		RepositoryName:    "library2/hello-world2",
+		Digest:            "digest",
+		PushTime:          now,
+		PullTime:          now,
+		Annotations:       `{"anno1":"value1"}`,
+	}
+	id1, err := d.dao.Create(d.ctx, art2)
+	d.Require().Nil(err)
+
+	time.Sleep(1 * time.Second)
+	now = time.Now()
+
+	art3 := &Artifact{
+		Type:              "IMAGE",
+		MediaType:         v1.MediaTypeImageConfig,
+		ManifestMediaType: v1.MediaTypeImageIndex,
+		ProjectID:         1234,
+		RepositoryID:      1235,
+		RepositoryName:    "library2/hello-world2",
+		Digest:            "digest2",
+		PushTime:          now,
+		PullTime:          now,
+		Annotations:       `{"anno1":"value1"}`,
+	}
+	id2, err := d.dao.Create(d.ctx, art3)
+	d.Require().Nil(err)
+
+	latest, err := d.dao.ListWithLatest(d.ctx, &q.Query{
+		Keywords: map[string]interface{}{
+			"ProjectID":  1234,
+			"media_type": v1.MediaTypeImageConfig,
+		},
+	})
+
+	d.Require().Nil(err)
+	d.Require().Equal(2, len(latest))
+	d.Equal("library2/hello-world1", latest[0].RepositoryName)
+
+	defer d.dao.Delete(d.ctx, id)
+	defer d.dao.Delete(d.ctx, id1)
+	defer d.dao.Delete(d.ctx, id2)
 }
 
 func TestDaoTestSuite(t *testing.T) {

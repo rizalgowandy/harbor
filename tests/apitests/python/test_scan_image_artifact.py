@@ -11,7 +11,6 @@ from library.repository import Repository
 from library.repository import push_self_build_image_to_project
 from library.artifact import Artifact
 from library.scan import Scan
-from library.sign import sign_image
 
 class TestScan(unittest.TestCase):
     @suppress_urllib3_warning
@@ -26,7 +25,7 @@ class TestScan(unittest.TestCase):
         self.user_password = "Aa123456"
         self.project_id, self.project_name, self.user_id, self.user_name, self.repo_name1 = [None] * 5
         self.user_id, self.user_name = self.user.create_user(user_password = self.user_password, **ADMIN_CLIENT)
-        self.USER_CLIENT = dict(with_signature = True, with_immutable_status = True, endpoint = self.url, username = self.user_name, password = self.user_password, with_scan_overview = True)
+        self.USER_CLIENT = dict(with_immutable_status = True, endpoint = self.url, username = self.user_name, password = self.user_password, with_scan_overview = True)
 
 
         #2. Create a new private project(PA) by user(UA);
@@ -105,8 +104,7 @@ class TestScan(unittest.TestCase):
         image = BASE_IMAGE['name']
         tag = BASE_IMAGE['tag']
         #5. Create a new repository(RA) and tag(TA) in project(PA) by user(UA);
-        # Push base image in function sign_image.
-        sign_image(harbor_server, self.project_name, image, tag)
+        push_self_build_image_to_project(self.project_name, harbor_server, self.user_name, self.user_password, image, tag)
 
         #6. Send scan image command and get tag(TA) information to check scan result, it should be finished;
         self.scan.scan_artifact(self.project_name, image, tag, **self.USER_CLIENT)

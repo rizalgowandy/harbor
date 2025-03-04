@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/replication/flow"
 	replicationmodel "github.com/goharbor/harbor/src/controller/replication/model"
 	"github.com/goharbor/harbor/src/jobservice/job"
@@ -34,11 +35,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/scheduler"
 	"github.com/goharbor/harbor/src/pkg/task"
 )
-
-func init() {
-	// keep only the latest created 50 replication execution records
-	task.SetExecutionSweeperCount(job.Replication, 50)
-}
 
 // Ctl is a global replication controller instance
 var Ctl = NewController()
@@ -106,10 +102,14 @@ func (c *controller) Start(ctx context.Context, policy *replicationmodel.Policy,
 	logger := log.GetLogger(ctx)
 	if !policy.Enabled {
 		return 0, errors.New(nil).WithCode(errors.PreconditionCode).
-			WithMessage("the policy %d is disabled", policy.ID)
+			WithMessagef("the policy %d is disabled", policy.ID)
 	}
 	// create an execution record
-	id, err := c.execMgr.Create(ctx, job.Replication, policy.ID, trigger)
+	extra := make(map[string]interface{})
+	if op := operator.FromContext(ctx); op != "" {
+		extra["operator"] = op
+	}
+	id, err := c.execMgr.Create(ctx, job.ReplicationVendorType, policy.ID, trigger, extra)
 	if err != nil {
 		return 0, err
 	}
@@ -154,15 +154,18 @@ func (c *controller) Start(ctx context.Context, policy *replicationmodel.Policy,
 func (c *controller) markError(ctx context.Context, executionID int64, err error) {
 	logger := log.GetLogger(ctx)
 	// try to stop the execution first in case that some tasks are already created
-	if err := c.execMgr.StopAndWait(ctx, executionID, 10*time.Second); err != nil {
-		logger.Errorf("failed to stop the execution %d: %v", executionID, err)
-	}
-	if err := c.execMgr.MarkError(ctx, executionID, err.Error()); err != nil {
-		logger.Errorf("failed to mark error for the execution %d: %v", executionID, err)
+	if e := c.execMgr.StopAndWaitWithError(ctx, executionID, 10*time.Second, err); e != nil {
+		logger.Errorf("failed to stop the execution %d: %v", executionID, e)
 	}
 }
 
 func (c *controller) Stop(ctx context.Context, id int64) error {
+	// check whether the replication execution existed
+	_, err := c.GetExecution(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	return c.execMgr.Stop(ctx, id)
 }
 
@@ -185,7 +188,7 @@ func (c *controller) ListExecutions(ctx context.Context, query *q.Query) ([]*Exe
 func (c *controller) buildExecutionQuery(query *q.Query) *q.Query {
 	// as the following logic may change the content of the query, clone it first
 	query = q.MustClone(query)
-	query.Keywords["VendorType"] = job.Replication
+	query.Keywords["VendorType"] = job.ReplicationVendorType
 	// convert the query keyword "PolicyID" or "policy_id" to the "VendorID"
 	if value, exist := query.Keywords["PolicyID"]; exist {
 		query.Keywords["VendorID"] = value
@@ -202,7 +205,7 @@ func (c *controller) GetExecution(ctx context.Context, id int64) (*Execution, er
 	execs, err := c.execMgr.List(ctx, &q.Query{
 		Keywords: map[string]interface{}{
 			"ID":         id,
-			"VendorType": job.Replication,
+			"VendorType": job.ReplicationVendorType,
 		},
 	})
 	if err != nil {
@@ -210,20 +213,20 @@ func (c *controller) GetExecution(ctx context.Context, id int64) (*Execution, er
 	}
 	if len(execs) == 0 {
 		return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-			WithMessage("replication execution %d not found", id)
+			WithMessagef("replication execution %d not found", id)
 	}
 	return convertExecution(execs[0]), nil
 }
 
 func (c *controller) TaskCount(ctx context.Context, query *q.Query) (int64, error) {
 	query = q.MustClone(query)
-	query.Keywords["VendorType"] = job.Replication
+	query.Keywords["VendorType"] = job.ReplicationVendorType
 	return c.taskMgr.Count(ctx, query)
 }
 
 func (c *controller) ListTasks(ctx context.Context, query *q.Query) ([]*Task, error) {
 	query = q.MustClone(query)
-	query.Keywords["VendorType"] = job.Replication
+	query.Keywords["VendorType"] = job.ReplicationVendorType
 	tks, err := c.taskMgr.List(ctx, query)
 	if err != nil {
 		return nil, err
@@ -239,7 +242,7 @@ func (c *controller) GetTask(ctx context.Context, id int64) (*Task, error) {
 	tasks, err := c.taskMgr.List(ctx, &q.Query{
 		Keywords: map[string]interface{}{
 			"ID":         id,
-			"VendorType": job.Replication,
+			"VendorType": job.ReplicationVendorType,
 		},
 	})
 	if err != nil {
@@ -247,7 +250,7 @@ func (c *controller) GetTask(ctx context.Context, id int64) (*Task, error) {
 	}
 	if len(tasks) == 0 {
 		return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-			WithMessage("replication task %d not found", id)
+			WithMessagef("replication task %d not found", id)
 	}
 	return convertTask(tasks[0]), nil
 }
@@ -262,7 +265,7 @@ func (c *controller) GetTaskLog(ctx context.Context, id int64) ([]byte, error) {
 }
 
 func convertExecution(exec *task.Execution) *Execution {
-	return &Execution{
+	replicationExec := &Execution{
 		ID:            exec.ID,
 		PolicyID:      exec.VendorID,
 		Status:        exec.Status,
@@ -272,6 +275,12 @@ func convertExecution(exec *task.Execution) *Execution {
 		StartTime:     exec.StartTime,
 		EndTime:       exec.EndTime,
 	}
+
+	if operator, ok := exec.ExtraAttrs["operator"].(string); ok {
+		replicationExec.Operator = operator
+	}
+
+	return replicationExec
 }
 
 func convertTask(task *task.Task) *Task {
@@ -284,6 +293,7 @@ func convertTask(task *task.Task) *Task {
 		ResourceType:        task.GetStringFromExtraAttrs("resource_type"),
 		SourceResource:      task.GetStringFromExtraAttrs("source_resource"),
 		DestinationResource: task.GetStringFromExtraAttrs("destination_resource"),
+		References:          task.GetStringFromExtraAttrs("references"),
 		Operation:           task.GetStringFromExtraAttrs("operation"),
 		JobID:               task.JobID,
 		CreationTime:        task.CreationTime,

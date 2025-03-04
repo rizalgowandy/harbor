@@ -87,9 +87,11 @@ func (r *Handler) handlePushArtifact(ctx context.Context, event *event.PushArtif
 						Type:   art.Type,
 						Digest: art.Digest,
 						Tags:   event.Tags,
+						Labels: event.Labels,
 					}},
 			},
 		},
+		Operator: event.Operator,
 	}
 	return repevent.Handle(ctx, e)
 }
@@ -109,10 +111,12 @@ func (r *Handler) handleDeleteArtifact(ctx context.Context, event *event.DeleteA
 						Type:   art.Type,
 						Digest: art.Digest,
 						Tags:   event.Tags,
+						Labels: event.Labels,
 					}},
 			},
 			Deleted: true,
 		},
+		Operator: event.Operator,
 	}
 	return repevent.Handle(ctx, e)
 }
@@ -143,15 +147,18 @@ func (r *Handler) handleCreateTag(ctx context.Context, event *event.CreateTagEve
 						Type:   art.Type,
 						Digest: art.Digest,
 						Tags:   []string{event.Tag},
+						Labels: event.Labels,
 					}},
 			},
 		},
+		Operator: event.Operator,
 	}
 	return repevent.Handle(ctx, e)
 }
 
 func (r *Handler) handleDeleteTag(ctx context.Context, event *event.DeleteTagEvent) error {
 	art := event.AttachedArtifact
+
 	e := &repevent.Event{
 		Type: repevent.EventTypeTagDelete,
 		Resource: &model.Resource{
@@ -165,11 +172,13 @@ func (r *Handler) handleDeleteTag(ctx context.Context, event *event.DeleteTagEve
 						Type:   art.Type,
 						Digest: art.Digest,
 						Tags:   []string{event.Tag},
+						Labels: event.Labels,
 					}},
 			},
 			Deleted:     true,
 			IsDeleteTag: true,
 		},
+		Operator: event.Operator,
 	}
 	return repevent.Handle(ctx, e)
 }

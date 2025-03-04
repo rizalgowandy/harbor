@@ -17,17 +17,19 @@ package project
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/pkg/config/db"
-	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"strconv"
+
+	"github.com/graph-gophers/dataloader"
 
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/controller/blob"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/config/db"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	dr "github.com/goharbor/harbor/src/pkg/quota/driver"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
-	"github.com/graph-gophers/dataloader"
 )
 
 func init() {
@@ -41,7 +43,7 @@ type driver struct {
 	blobCtl blob.Controller
 }
 
-func (d *driver) Enabled(ctx context.Context, key string) (bool, error) {
+func (d *driver) Enabled(ctx context.Context, _ string) (bool, error) {
 	// NOTE: every time load the new configurations from the db to get the latest configurations may have performance problem.
 	if err := d.cfg.Load(ctx); err != nil {
 		return false, err
@@ -60,7 +62,7 @@ func (d *driver) HardLimits(ctx context.Context) types.ResourceList {
 	}
 }
 
-func (d *driver) Load(ctx context.Context, key string) (dr.RefObject, error) {
+func (d *driver) Load(ctx context.Context, key string) (dr.QuotaRefObject, error) {
 	thunk := d.loader.Load(ctx, dataloader.StringKey(key))
 
 	result, err := thunk()
@@ -73,7 +75,7 @@ func (d *driver) Load(ctx context.Context, key string) (dr.RefObject, error) {
 		return nil, fmt.Errorf("bad result for project: %s", key)
 	}
 
-	return dr.RefObject{
+	return dr.QuotaRefObject{
 		"id":         project.ProjectID,
 		"name":       project.Name,
 		"owner_name": project.OwnerName,
@@ -90,8 +92,8 @@ func (d *driver) Validate(hardLimits types.ResourceList) error {
 			return fmt.Errorf("resource %s not support", resource)
 		}
 
-		if value <= 0 && value != types.UNLIMITED {
-			return fmt.Errorf("invalid value for resource %s", resource)
+		if err := lib.ValidateQuotaLimit(value); err != nil {
+			return err
 		}
 	}
 

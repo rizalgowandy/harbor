@@ -3,53 +3,51 @@ env:
   DOCKER_COMPOSE_VERSION: 1.23.0
 
 on:
-    push:
-        branches:
-          - main
-          - release-*
-        tags:
-          - v*
+  push:
+    branches:
+      - main
+      - release-*
+
 jobs:
   BUILD_PACKAGE:
     env:
         BUILD_PACKAGE: true
     runs-on:
-      #- self-hosted
-      - ubuntu-latest
+      - ubuntu-20.04
     steps:
-      - uses: actions/checkout@v2
-      - uses: google-github-actions/setup-gcloud@master
+      - uses: actions/checkout@v3
+      - uses: 'google-github-actions/auth@v2'
         with:
-          version: '285.0.0'
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          service_account_email: ${{ secrets.GCP_SA_EMAIL }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          export_default_credentials: true
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          version: '430.0.0'
       - run: gcloud info
-      - name: Set up Go 1.17
-        uses: actions/setup-go@v1
+      - name: Set up Go 1.22
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.17.7
+          go-version: 1.23.2
         id: go
-      - name: setup Docker
-        uses: docker-practice/actions-setup-docker@0.0.1
+      - name: Setup Docker
+        uses: docker-practice/actions-setup-docker@master
         with:
-          docker_version: 18.09
+          docker_version: 20.10
           docker_channel: stable
-      - uses: actions/checkout@v2.1.0
+      - uses: actions/checkout@v3
       - uses: jitterbit/get-changed-files@v1
         id: changed-files
         with:
           format: space-delimited
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/goharbor/harbor
       - name: Build Base Image
         if: |
             contains(steps.changed-files.outputs.modified, 'Dockerfile.base') ||
             contains(steps.changed-files.outputs.modified, 'VERSION') ||
-            contains(steps.changed-files.outputs.modified, '.buildbaselog')
+            contains(steps.changed-files.outputs.modified, '.buildbaselog') ||
+            github.ref == 'refs/heads/main'
         run: |
           set -x
           echo "BUILD_BASE=true" >> $GITHUB_ENV
@@ -91,40 +89,20 @@ jobs:
           else
             build_base_params=" BUILD_BASE=true PUSHBASEIMAGE=true REGISTRYUSER=\"${{ secrets.DOCKER_HUB_USERNAME }}\" REGISTRYPASSWORD=\"${{ secrets.DOCKER_HUB_PASSWORD }}\""
           fi
-          sudo make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=${Harbor_Build_Base_Tag} VERSIONTAG=${Harbor_Assets_Version} PKGVERSIONTAG=${Harbor_Package_Version} BUILDBIN=true NOTARYFLAG=true CHARTFLAG=true TRIVYFLAG=true HTTPPROXY= ${build_base_params}
-          sudo make package_online GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=${Harbor_Build_Base_Tag} VERSIONTAG=${Harbor_Assets_Version} PKGVERSIONTAG=${Harbor_Package_Version} BUILDBIN=true NOTARYFLAG=true CHARTFLAG=true TRIVYFLAG=true HTTPPROXY= ${build_base_params}
+          sudo make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=${Harbor_Build_Base_Tag} VERSIONTAG=${Harbor_Assets_Version} PKGVERSIONTAG=${Harbor_Package_Version} TRIVYFLAG=true HTTPPROXY= ${build_base_params}
+          sudo make package_online GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=${Harbor_Build_Base_Tag} VERSIONTAG=${Harbor_Assets_Version} PKGVERSIONTAG=${Harbor_Package_Version} TRIVYFLAG=true HTTPPROXY= ${build_base_params}
           harbor_offline_build_bundle=$(basename harbor-offline-installer-*.tgz)
           harbor_online_build_bundle=$(basename harbor-online-installer-*.tgz)
           echo "Package name is: $harbor_offline_build_bundle"
           echo "Package name is: $harbor_online_build_bundle"
 
-          echo -en "${{ secrets.HARBOR_SIGN_KEY }}" |  gpg --import
-          gpg -v -ab -u ${{ secrets.HARBOR_SIGN_KEY_ID }} $harbor_offline_build_bundle
-          gpg -v -ab -u ${{ secrets.HARBOR_SIGN_KEY_ID }} $harbor_online_build_bundle
-
           source tests/ci/build_util.sh
           cp ${harbor_offline_build_bundle}                 harbor-offline-installer-latest.tgz
-          cp ${harbor_offline_build_bundle}.asc             harbor-offline-installer-latest.tgz.asc
           cp ${harbor_online_build_bundle}                  harbor-online-installer-latest.tgz
-          cp ${harbor_online_build_bundle}.asc              harbor-online-installer-latest.tgz.asc
           uploader ${harbor_offline_build_bundle}           $harbor_target_bucket
-          uploader ${harbor_offline_build_bundle}.asc       $harbor_target_bucket
           uploader ${harbor_online_build_bundle}            $harbor_target_bucket
-          uploader ${harbor_online_build_bundle}.asc        $harbor_target_bucket
           uploader harbor-offline-installer-latest.tgz      $harbor_target_bucket
-          uploader harbor-offline-installer-latest.tgz.asc  $harbor_target_bucket
           uploader harbor-online-installer-latest.tgz       $harbor_target_bucket
-          uploader harbor-online-installer-latest.tgz.asc   $harbor_target_bucket
           echo "BUILD_BUNDLE=$harbor_offline_build_bundle" >> $GITHUB_ENV
 
           publishImage $target_branch $Harbor_Assets_Version "${{ secrets.DOCKER_HUB_USERNAME }}" "${{ secrets.DOCKER_HUB_PASSWORD }}"
-
-      - name: Slack Notification
-        uses: sonots/slack-notice-action@v3
-        with:
-          status: ${{ job.status }}
-          title: Build Package - ${{ env.BUILD_BUNDLE }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
-        if: always()

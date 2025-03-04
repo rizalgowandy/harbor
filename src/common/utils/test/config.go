@@ -54,7 +54,6 @@ var defaultConfig = map[string]interface{}{
 	common.MaxJobWorkers:              3,
 	common.TokenExpiration:            30,
 	common.AdminInitialPassword:       "password",
-	common.WithNotary:                 false,
 	common.WithTrivy:                  false,
 	common.UAAClientID:                "testid",
 	common.UAAClientSecret:            "testsecret",
@@ -63,11 +62,10 @@ var defaultConfig = map[string]interface{}{
 	common.CoreURL:                    "http://myui:8888/",
 	common.JobServiceURL:              "http://myjob:8888/",
 	common.ReadOnly:                   false,
-	common.NotaryURL:                  "http://notary-server:4443",
 	common.RobotNamePrefix:            "robot$",
 }
 
-// GetDefaultConfigMap returns the defailt config map for easier modification.
+// GetDefaultConfigMap returns the default config map for easier modification.
 func GetDefaultConfigMap() map[string]interface{} {
 	return defaultConfig
 }

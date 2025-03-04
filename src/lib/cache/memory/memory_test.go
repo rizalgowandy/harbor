@@ -16,11 +16,13 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/lib/cache"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/lib/cache"
 )
 
 type CacheTestSuite struct {
@@ -106,6 +108,56 @@ func (suite *CacheTestSuite) TestSave() {
 
 func (suite *CacheTestSuite) TestPing() {
 	suite.NoError(suite.cache.Ping(suite.ctx))
+}
+
+func (suite *CacheTestSuite) TestScan() {
+	seed := func(n int) {
+		for i := 0; i < n; i++ {
+			key := fmt.Sprintf("test-scan-%d", i)
+			err := suite.cache.Save(suite.ctx, key, "")
+			suite.NoError(err)
+		}
+	}
+	clean := func(n int) {
+		for i := 0; i < n; i++ {
+			key := fmt.Sprintf("test-scan-%d", i)
+			err := suite.cache.Delete(suite.ctx, key)
+			suite.NoError(err)
+		}
+	}
+	{
+		// no match should return all keys
+		expect := []string{"test-scan-0", "test-scan-1", "test-scan-2"}
+		// seed data
+		seed(3)
+		// test scan
+		iter, err := suite.cache.Scan(suite.ctx, "")
+		suite.NoError(err)
+		got := []string{}
+		for iter.Next(suite.ctx) {
+			got = append(got, iter.Val())
+		}
+		suite.ElementsMatch(expect, got)
+		// clean up
+		clean(3)
+	}
+
+	{
+		// with match should return matched keys
+		expect := []string{"test-scan-1", "test-scan-10"}
+		// seed data
+		seed(11)
+		// test scan
+		iter, err := suite.cache.Scan(suite.ctx, "test-scan-1")
+		suite.NoError(err)
+		got := []string{}
+		for iter.Next(suite.ctx) {
+			got = append(got, iter.Val())
+		}
+		suite.ElementsMatch(expect, got)
+		// clean up
+		clean(11)
+	}
 }
 
 func TestCacheTestSuite(t *testing.T) {

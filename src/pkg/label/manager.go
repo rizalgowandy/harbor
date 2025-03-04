@@ -16,11 +16,12 @@ package label
 
 import (
 	"context"
+	"time"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/label/dao"
 	"github.com/goharbor/harbor/src/pkg/label/model"
-	"time"
 )
 
 // Mgr is a global instance of label manager
@@ -113,7 +114,7 @@ func (m *manager) RemoveFrom(ctx context.Context, labelID int64, artifactID int6
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("reference with label %d and artifact %d not found", labelID, artifactID)
+		return errors.NotFoundError(nil).WithMessagef("reference with label %d and artifact %d not found", labelID, artifactID)
 	}
 	return nil
 }

@@ -1,12 +1,9 @@
 package exporter
 
 import (
-	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/suite"
 
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/dao"
@@ -15,13 +12,15 @@ import (
 	proctl "github.com/goharbor/harbor/src/controller/project"
 	quotactl "github.com/goharbor/harbor/src/controller/quota"
 	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/member"
 	memberModels "github.com/goharbor/harbor/src/pkg/member/models"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	qtypes "github.com/goharbor/harbor/src/pkg/quota/types"
-	"github.com/goharbor/harbor/src/pkg/repository"
 	"github.com/goharbor/harbor/src/pkg/repository/model"
 	"github.com/goharbor/harbor/src/pkg/user"
+	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -41,8 +40,8 @@ var (
 
 func setupTest(t *testing.T) {
 	test.InitDatabaseFromEnv()
-	ctx := orm.Context()
 
+	ctx := orm.Context()
 	// register projAdmin and assign project admin role
 	aliceID, err := user.Mgr.Create(ctx, &alice)
 	if err != nil {
@@ -78,13 +77,13 @@ func setupTest(t *testing.T) {
 
 	// Add repo to project
 	repo1.ProjectID = testPro1.ProjectID
-	repo1ID, err := repository.Mgr.Create(ctx, &repo1)
+	repo1ID, err := pkg.RepositoryMgr.Create(ctx, &repo1)
 	if err != nil {
 		t.Errorf("add repo error %v", err)
 	}
 	repo1.RepositoryID = repo1ID
 	repo2.ProjectID = testPro2.ProjectID
-	repo2ID, err := repository.Mgr.Create(ctx, &repo2)
+	repo2ID, err := pkg.RepositoryMgr.Create(ctx, &repo2)
 	repo2.RepositoryID = repo2ID
 	if err != nil {
 		t.Errorf("add repo error %v", err)
@@ -93,7 +92,7 @@ func setupTest(t *testing.T) {
 	art1.ProjectID = testPro1.ProjectID
 	art1.RepositoryID = repo1ID
 	art1.PushTime = time.Now()
-	_, err = artifact.Mgr.Create(ctx, &art1)
+	_, err = pkg.ArtifactMgr.Create(ctx, &art1)
 	if err != nil {
 		t.Errorf("add repo error %v", err)
 	}
@@ -101,7 +100,7 @@ func setupTest(t *testing.T) {
 	art2.ProjectID = testPro2.ProjectID
 	art2.RepositoryID = repo2ID
 	art2.PushTime = time.Now()
-	_, err = artifact.Mgr.Create(ctx, &art2)
+	_, err = pkg.ArtifactMgr.Create(ctx, &art2)
 	if err != nil {
 		t.Errorf("add repo error %v", err)
 	}
@@ -137,11 +136,11 @@ func tearDownTest(t *testing.T) {
 	dao.GetOrmer().Raw("delete from harbor_user where user_id in (?, ?, ?)", []int{alice.UserID, bob.UserID, eve.UserID}).Exec()
 }
 
-type PorjectCollectorTestSuite struct {
+type ProjectCollectorTestSuite struct {
 	suite.Suite
 }
 
-func (c *PorjectCollectorTestSuite) TestProjectCollector() {
+func (c *ProjectCollectorTestSuite) TestProjectCollector() {
 	pMap := make(map[int64]*projectInfo)
 	updateProjectBasicInfo(pMap)
 	updateProjectMemberInfo(pMap)
@@ -168,10 +167,4 @@ func (c *PorjectCollectorTestSuite) TestProjectCollector() {
 	c.Equalf(pMap[testPro2.ProjectID].PullTotal, float64(0), "pMap %v", pMap)
 	c.Equalf(pMap[testPro2.ProjectID].Artifact["IMAGE"].ArtifactTotal, float64(1), "pMap %v", pMap)
 
-}
-
-func TestPorjectCollectorTestSuite(t *testing.T) {
-	setupTest(t)
-	defer tearDownTest(t)
-	suite.Run(t, new(PorjectCollectorTestSuite))
 }

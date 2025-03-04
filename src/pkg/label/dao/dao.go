@@ -16,11 +16,12 @@ package dao
 
 import (
 	"context"
+	"time"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/label/model"
-	"time"
 )
 
 // DAO is the data access object interface for label
@@ -122,7 +123,7 @@ func (d *defaultDAO) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("label %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("label %d not found", id)
 	}
 	return nil
 }
@@ -183,7 +184,7 @@ func (d *defaultDAO) DeleteReference(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("label reference %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("label reference %d not found", id)
 	}
 	return nil
 }

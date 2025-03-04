@@ -1,17 +1,36 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package robot
 
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"time"
 
 	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/controller/event/metadata"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/lib/retry"
+	"github.com/goharbor/harbor/src/pkg"
+	"github.com/goharbor/harbor/src/pkg/notification"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
 	"github.com/goharbor/harbor/src/pkg/project"
 	"github.com/goharbor/harbor/src/pkg/rbac"
@@ -37,7 +56,7 @@ type Controller interface {
 	Create(ctx context.Context, r *Robot) (int64, string, error)
 
 	// Delete ...
-	Delete(ctx context.Context, id int64) error
+	Delete(ctx context.Context, id int64, option ...*Option) error
 
 	// Update ...
 	Update(ctx context.Context, r *Robot, option *Option) error
@@ -57,7 +76,7 @@ type controller struct {
 func NewController() Controller {
 	return &controller{
 		robotMgr: robot.Mgr,
-		proMgr:   project.Mgr,
+		proMgr:   pkg.ProjectMgr,
 		rbacMgr:  rbac.Mgr,
 	}
 }
@@ -78,17 +97,9 @@ func (d *controller) Count(ctx context.Context, query *q.Query) (int64, error) {
 
 // Create ...
 func (d *controller) Create(ctx context.Context, r *Robot) (int64, string, error) {
-	if err := d.setProject(ctx, r); err != nil {
-		return 0, "", err
-	}
-
 	var expiresAt int64
 	if r.Duration == -1 {
 		expiresAt = -1
-	} else if r.Duration == 0 {
-		// system default robot duration
-		r.Duration = int64(config.RobotTokenDuration(ctx))
-		expiresAt = time.Now().AddDate(0, 0, config.RobotTokenDuration(ctx)).Unix()
 	} else {
 		durationStr := strconv.FormatInt(r.Duration, 10)
 		duration, err := strconv.Atoi(durationStr)
@@ -98,16 +109,18 @@ func (d *controller) Create(ctx context.Context, r *Robot) (int64, string, error
 		expiresAt = time.Now().AddDate(0, 0, duration).Unix()
 	}
 
-	pwd := utils.GenerateRandomString()
-	salt := utils.GenerateRandomString()
-	secret := utils.Encrypt(pwd, salt, utils.SHA256)
+	secret, pwd, salt, err := CreateSec()
+	if err != nil {
+		return 0, "", err
+	}
 
 	name := r.Name
 	// for the project level robot, set the name pattern as projectname+robotname, and + is a illegal character.
 	if r.Level == LEVELPROJECT {
 		name = fmt.Sprintf("%s+%s", r.ProjectName, r.Name)
 	}
-	robotID, err := d.robotMgr.Create(ctx, &model.Robot{
+
+	rCreate := &model.Robot{
 		Name:        name,
 		Description: r.Description,
 		ProjectID:   r.ProjectID,
@@ -116,7 +129,10 @@ func (d *controller) Create(ctx context.Context, r *Robot) (int64, string, error
 		Duration:    r.Duration,
 		Salt:        salt,
 		Visible:     r.Visible,
-	})
+		CreatorRef:  r.CreatorRef,
+		CreatorType: r.CreatorType,
+	}
+	robotID, err := d.robotMgr.Create(ctx, rCreate)
 	if err != nil {
 		return 0, "", err
 	}
@@ -124,17 +140,35 @@ func (d *controller) Create(ctx context.Context, r *Robot) (int64, string, error
 	if err := d.createPermission(ctx, r); err != nil {
 		return 0, "", err
 	}
+	// fire event
+	notification.AddEvent(ctx, &metadata.CreateRobotEventMetadata{
+		Ctx:   ctx,
+		Robot: rCreate,
+	})
 	return robotID, pwd, nil
 }
 
 // Delete ...
-func (d *controller) Delete(ctx context.Context, id int64) error {
+func (d *controller) Delete(ctx context.Context, id int64, option ...*Option) error {
+	rDelete, err := d.robotMgr.Get(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := d.robotMgr.Delete(ctx, id); err != nil {
 		return err
 	}
 	if err := d.rbacMgr.DeletePermissionsByRole(ctx, ROBOTTYPE, id); err != nil {
 		return err
 	}
+	// fire event
+	deleteMetadata := &metadata.DeleteRobotEventMetadata{
+		Ctx:   ctx,
+		Robot: rDelete,
+	}
+	if len(option) != 0 && option[0].Operator != "" {
+		deleteMetadata.Operator = option[0].Operator
+	}
+	notification.AddEvent(ctx, deleteMetadata)
 	return nil
 }
 
@@ -148,7 +182,7 @@ func (d *controller) Update(ctx context.Context, r *Robot, option *Option) error
 	}
 	// update the permission
 	if option != nil && option.WithPermission {
-		if err := d.rbacMgr.DeletePermissionsByRole(ctx, ROBOTTYPE, r.ID); err != nil {
+		if err := d.rbacMgr.DeletePermissionsByRole(ctx, ROBOTTYPE, r.ID); err != nil && !errors.IsNotFoundErr(err) {
 			return err
 		}
 		if err := d.createPermission(ctx, r); err != nil {
@@ -293,22 +327,6 @@ func (d *controller) populatePermissions(ctx context.Context, r *Robot) error {
 	return nil
 }
 
-// set the project info if it's a project level robot
-func (d *controller) setProject(ctx context.Context, r *Robot) error {
-	if r == nil {
-		return nil
-	}
-	if r.Level == LEVELPROJECT {
-		pro, err := d.proMgr.Get(ctx, r.Permissions[0].Namespace)
-		if err != nil {
-			return err
-		}
-		r.ProjectName = pro.Name
-		r.ProjectID = pro.ProjectID
-	}
-	return nil
-}
-
 // convertScope converts the db scope into robot model
 // /system    =>  Kind: system  Namespace: /
 // /project/* =>  Kind: project Namespace: *
@@ -358,4 +376,61 @@ func (d *controller) toScope(ctx context.Context, p *Permission) (string, error)
 		return fmt.Sprintf("/project/%d", pro.ProjectID), nil
 	}
 	return "", errors.New(nil).WithMessage("unknown robot kind").WithCode(errors.BadRequestCode)
+}
+
+// set the project info if it's a project level robot
+func SetProject(ctx context.Context, r *Robot) error {
+	if r == nil {
+		return nil
+	}
+	if r.Level == LEVELPROJECT {
+		pro, err := project.New().Get(ctx, r.Permissions[0].Namespace)
+		if err != nil {
+			return err
+		}
+		r.ProjectName = pro.Name
+		r.ProjectID = pro.ProjectID
+	}
+	return nil
+}
+
+func CreateSec(salt ...string) (string, string, string, error) {
+	var secret, pwd string
+	options := []retry.Option{
+		retry.InitialInterval(time.Millisecond * 500),
+		retry.MaxInterval(time.Second * 10),
+		retry.Timeout(time.Minute),
+		retry.Callback(func(err error, sleep time.Duration) {
+			log.Debugf("failed to generate secret for robot, retry after %s : %v", sleep, err)
+		}),
+	}
+
+	if err := retry.Retry(func() error {
+		pwd = utils.GenerateRandomString()
+		if !IsValidSec(pwd) {
+			return errors.New(nil).WithMessage("invalid secret format")
+		}
+		return nil
+	}, options...); err != nil {
+		return "", "", "", errors.Wrap(err, "failed to generate an valid random secret for robot in one minute, please try again")
+	}
+
+	var saltTmp string
+	if len(salt) != 0 {
+		saltTmp = salt[0]
+	} else {
+		saltTmp = utils.GenerateRandomString()
+	}
+	secret = utils.Encrypt(pwd, saltTmp, utils.SHA256)
+	return secret, pwd, saltTmp, nil
+}
+
+var (
+	hasLower  = regexp.MustCompile(`[a-z]`)
+	hasUpper  = regexp.MustCompile(`[A-Z]`)
+	hasNumber = regexp.MustCompile(`\d`)
+)
+
+func IsValidSec(secret string) bool {
+	return len(secret) >= 8 && len(secret) <= 128 && hasLower.MatchString(secret) && hasUpper.MatchString(secret) && hasNumber.MatchString(secret)
 }

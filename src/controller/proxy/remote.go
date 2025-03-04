@@ -1,16 +1,16 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package proxy
 
@@ -20,6 +20,8 @@ import (
 	"io"
 
 	"github.com/docker/distribution"
+
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/pkg/reg"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
@@ -42,13 +44,16 @@ type remoteHelper struct {
 	regID       int64
 	registry    adapter.ArtifactRegistry
 	registryMgr reg.Manager
+	opts        *Options
 }
 
 // NewRemoteHelper create a remote interface
-func NewRemoteHelper(ctx context.Context, regID int64) (RemoteInterface, error) {
+func NewRemoteHelper(ctx context.Context, regID int64, opts ...Option) (RemoteInterface, error) {
 	r := &remoteHelper{
 		regID:       regID,
-		registryMgr: reg.Mgr}
+		registryMgr: reg.Mgr,
+		opts:        NewOptions(opts...),
+	}
 	if err := r.init(ctx); err != nil {
 		return nil, err
 	}
@@ -56,7 +61,6 @@ func NewRemoteHelper(ctx context.Context, regID int64) (RemoteInterface, error) 
 }
 
 func (r *remoteHelper) init(ctx context.Context) error {
-
 	if r.registry != nil {
 		return nil
 	}
@@ -83,7 +87,14 @@ func (r *remoteHelper) init(ctx context.Context) error {
 }
 
 func (r *remoteHelper) BlobReader(repo, dig string) (int64, io.ReadCloser, error) {
-	return r.registry.PullBlob(repo, dig)
+	sz, bReader, err := r.registry.PullBlob(repo, dig)
+	if err != nil {
+		return 0, nil, err
+	}
+	if r.opts != nil && r.opts.Speed > 0 {
+		bReader = lib.NewReader(bReader, r.opts.Speed)
+	}
+	return sz, bReader, err
 }
 
 func (r *remoteHelper) Manifest(repo string, ref string) (distribution.Manifest, string, error) {

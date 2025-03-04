@@ -1,25 +1,30 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package handler
 
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/utils"
 	ugCtl "github.com/goharbor/harbor/src/controller/usergroup"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
@@ -27,7 +32,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/usergroup/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/usergroup"
-	"strings"
 )
 
 type userGroupAPI struct {
@@ -88,7 +92,7 @@ func (u *userGroupAPI) GetUserGroup(ctx context.Context, params operation.GetUse
 		return u.SendError(ctx, err)
 	}
 	if ug == nil {
-		return u.SendError(ctx, errors.NotFoundError(nil).WithMessage("the user group with id %v is not found", params.GroupID))
+		return u.SendError(ctx, errors.NotFoundError(nil).WithMessagef("the user group with id %v is not found", params.GroupID))
 	}
 	userGroup := &models.UserGroup{
 		GroupName:   ug.GroupName,
@@ -109,6 +113,9 @@ func (u *userGroupAPI) ListUserGroups(ctx context.Context, params operation.List
 	query, err := u.BuildQuery(ctx, nil, nil, params.Page, params.PageSize)
 	if err != nil {
 		return u.SendError(ctx, err)
+	}
+	if params.GroupName != nil && len(*params.GroupName) > 0 {
+		query.Keywords["GroupName"] = &q.FuzzyMatchValue{Value: *params.GroupName}
 	}
 	switch authMode {
 	case common.LDAPAuth:
@@ -201,7 +208,11 @@ func (u *userGroupAPI) SearchUserGroups(ctx context.Context, params operation.Se
 	if err != nil {
 		return u.SendError(ctx, err)
 	}
+	result := getUserGroupSearchItem(ug)
+	sort.Slice(result, func(i, j int) bool {
+		return utils.MostMatchSorter(result[i].GroupName, result[j].GroupName, params.Groupname)
+	})
 	return operation.NewSearchUserGroupsOK().WithXTotalCount(total).
-		WithPayload(getUserGroupSearchItem(ug)).
+		WithPayload(result).
 		WithLink(u.Links(ctx, params.HTTPRequest.URL, total, query.PageNumber, query.PageSize).String())
 }

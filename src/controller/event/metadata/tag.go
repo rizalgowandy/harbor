@@ -16,17 +16,19 @@ package metadata
 
 import (
 	"context"
+	"time"
+
 	"github.com/goharbor/harbor/src/common/security"
 	event2 "github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/notifier/event"
-	"time"
 )
 
 // CreateTagEventMetadata is the metadata from which the create tag event can be resolved
 type CreateTagEventMetadata struct {
 	Ctx              context.Context
 	Tag              string
+	Labels           []string
 	AttachedArtifact *artifact.Artifact
 }
 
@@ -36,6 +38,7 @@ func (c *CreateTagEventMetadata) Resolve(event *event.Event) error {
 		EventType:        event2.TopicCreateTag,
 		Repository:       c.AttachedArtifact.RepositoryName,
 		Tag:              c.Tag,
+		Labels:           c.Labels,
 		AttachedArtifact: c.AttachedArtifact,
 		OccurAt:          time.Now(),
 	}
@@ -52,6 +55,7 @@ func (c *CreateTagEventMetadata) Resolve(event *event.Event) error {
 type DeleteTagEventMetadata struct {
 	Ctx              context.Context
 	Tag              string
+	Labels           []string
 	AttachedArtifact *artifact.Artifact
 }
 
@@ -61,6 +65,7 @@ func (d *DeleteTagEventMetadata) Resolve(event *event.Event) error {
 		EventType:        event2.TopicDeleteTag,
 		Repository:       d.AttachedArtifact.RepositoryName,
 		Tag:              d.Tag,
+		Labels:           d.Labels,
 		AttachedArtifact: d.AttachedArtifact,
 		OccurAt:          time.Now(),
 	}
