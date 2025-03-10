@@ -17,6 +17,8 @@ package internal
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/project"
@@ -29,7 +31,6 @@ import (
 	scantesting "github.com/goharbor/harbor/src/testing/controller/scan"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type AutoScanTestSuite struct {
@@ -92,6 +93,34 @@ func (suite *AutoScanTestSuite) TestAutoScan() {
 	art := &artifact.Artifact{}
 
 	suite.Nil(autoScan(ctx, art))
+}
+
+func (suite *AutoScanTestSuite) TestAutoScanSBOM() {
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
+		Metadata: map[string]string{
+			proModels.ProMetaAutoSBOMGen: "true",
+		},
+	}, nil)
+	suite.scanController.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	ctx := orm.NewContext(nil, &ormtesting.FakeOrmer{})
+	art := &artifact.Artifact{}
+
+	suite.Nil(autoGenSBOM(ctx, art))
+}
+
+func (suite *AutoScanTestSuite) TestAutoScanSBOMFalse() {
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
+		Metadata: map[string]string{
+			proModels.ProMetaAutoSBOMGen: "false",
+		},
+	}, nil)
+
+	suite.scanController.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+
+	ctx := orm.NewContext(nil, &ormtesting.FakeOrmer{})
+	art := &artifact.Artifact{}
+
+	suite.Nil(autoGenSBOM(ctx, art))
 }
 
 func (suite *AutoScanTestSuite) TestAutoScanFailed() {

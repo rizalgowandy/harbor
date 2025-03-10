@@ -20,20 +20,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goharbor/harbor/src/jobservice/errs"
-	"github.com/goharbor/harbor/src/lib"
-
 	"github.com/gocraft/work"
+	"github.com/gomodule/redigo/redis"
+
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/env"
+	"github.com/goharbor/harbor/src/jobservice/errs"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/lcm"
 	"github.com/goharbor/harbor/src/jobservice/logger"
 	"github.com/goharbor/harbor/src/jobservice/period"
 	"github.com/goharbor/harbor/src/jobservice/runner"
 	"github.com/goharbor/harbor/src/jobservice/worker"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/gomodule/redigo/redis"
 )
 
 var (
@@ -154,7 +154,7 @@ func (w *basicWorker) Start() error {
 	logger.Infof("Basic worker is started")
 
 	// Start the reaper
-	w.knownJobs.Range(func(k interface{}, v interface{}) bool {
+	w.knownJobs.Range(func(k interface{}, _ interface{}) bool {
 		w.reaper.jobTypes = append(w.reaper.jobTypes, k.(string))
 
 		return true
@@ -172,7 +172,7 @@ func (w *basicWorker) GetPoolID() string {
 
 // RegisterJobs is used to register multiple jobs to worker.
 func (w *basicWorker) RegisterJobs(jobs map[string]interface{}) error {
-	if jobs == nil || len(jobs) == 0 {
+	if len(jobs) == 0 {
 		// Do nothing
 		return nil
 	}
@@ -251,7 +251,7 @@ func (w *basicWorker) Schedule(jobName string, params job.Parameters, runAfterSe
 }
 
 // PeriodicallyEnqueue job
-func (w *basicWorker) PeriodicallyEnqueue(jobName string, params job.Parameters, cronSetting string, isUnique bool, webHook string) (*job.Stats, error) {
+func (w *basicWorker) PeriodicallyEnqueue(jobName string, params job.Parameters, cronSetting string, _ bool, webHook string) (*job.Stats, error) {
 	p := &period.Policy{
 		ID:            utils.MakeIdentifier(),
 		JobName:       jobName,
@@ -369,7 +369,7 @@ func (w *basicWorker) StopJob(jobID string) error {
 }
 
 // RetryJob retry the job
-func (w *basicWorker) RetryJob(jobID string) error {
+func (w *basicWorker) RetryJob(_ string) error {
 	return errors.New("not implemented")
 }
 

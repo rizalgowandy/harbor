@@ -44,22 +44,23 @@ var Ctl = NewController()
 // Data wraps common systeminfo data
 type Data struct {
 	AuthMode          string
+	PrimaryAuthMode   bool
 	SelfRegistration  bool
-	HarborVersion     string
+	BannerMessage     string
 	AuthProxySettings *models.HTTPAuthProxy
 	Protected         *protectedData
+	OIDCProviderName  string
 }
 
 type protectedData struct {
 	CurrentTime                 time.Time
-	WithNotary                  bool
 	RegistryURL                 string
+	HarborVersion               string
 	ExtURL                      string
 	ProjectCreationRestrict     string
 	HasCARoot                   bool
 	RegistryStorageProviderName string
 	ReadOnly                    bool
-	WithChartMuseum             bool
 	NotificationEnable          bool
 }
 
@@ -91,10 +92,18 @@ func (c *controller) GetInfo(ctx context.Context, opt Options) (*Data, error) {
 		logger.Errorf("Error occurred getting config: %v", err)
 		return nil, err
 	}
+	mgr := config.GetCfgManager(ctx)
+	err = mgr.Load(ctx)
+	if err != nil {
+		logger.Errorf("Error occurred loading config: %v", err)
+		return nil, err
+	}
 	res := &Data{
 		AuthMode:         utils.SafeCastString(cfg[common.AUTHMode]),
+		PrimaryAuthMode:  utils.SafeCastBool(cfg[common.PrimaryAuthMode]),
 		SelfRegistration: utils.SafeCastBool(cfg[common.SelfRegistration]),
-		HarborVersion:    fmt.Sprintf("%s-%s", version.ReleaseVersion, version.GitCommit),
+		BannerMessage:    utils.SafeCastString(mgr.Get(ctx, common.BannerMessage).GetString()),
+		OIDCProviderName: OIDCProviderName(cfg),
 	}
 	if res.AuthMode == common.HTTPAuth {
 		if s, err := config.HTTPAuthProxySetting(ctx); err == nil {
@@ -118,9 +127,8 @@ func (c *controller) GetInfo(ctx context.Context, opt Options) (*Data, error) {
 	enableCADownload := caStatErr == nil && strings.HasPrefix(extURL, "https://")
 	res.Protected = &protectedData{
 		CurrentTime:                 time.Now(),
-		WithNotary:                  config.WithNotary(),
-		WithChartMuseum:             config.WithChartMuseum(),
 		ReadOnly:                    config.ReadOnly(ctx),
+		HarborVersion:               fmt.Sprintf("%s-%s", version.ReleaseVersion, version.GitCommit),
 		ExtURL:                      extURL,
 		RegistryURL:                 registryURL,
 		HasCARoot:                   enableCADownload,
@@ -131,7 +139,15 @@ func (c *controller) GetInfo(ctx context.Context, opt Options) (*Data, error) {
 	return res, nil
 }
 
-func (c *controller) GetCapacity(ctx context.Context) (*imagestorage.Capacity, error) {
+func OIDCProviderName(cfg map[string]interface{}) string {
+	authMode := utils.SafeCastString(cfg[common.AUTHMode])
+	if authMode != common.OIDCAuth {
+		return ""
+	}
+	return utils.SafeCastString(cfg[common.OIDCName])
+}
+
+func (c *controller) GetCapacity(_ context.Context) (*imagestorage.Capacity, error) {
 	systeminfo.Init()
 	return imagestorage.GlobalDriver.Cap()
 }
@@ -142,14 +158,15 @@ func (c *controller) GetCA(ctx context.Context) (io.ReadCloser, error) {
 	if len(testRootCertPath) > 0 {
 		path = testRootCertPath
 	}
-	if _, err := os.Stat(path); err == nil {
+	_, err := os.Stat(path)
+	if err == nil {
 		return os.Open(path)
 	} else if os.IsNotExist(err) {
 		return nil, errors.NotFoundError(fmt.Errorf("cert not found in path: %s", path))
-	} else {
-		logger.Errorf("Failed to stat the cert, path: %s, error: %v", path, err)
-		return nil, err
 	}
+	// else
+	logger.Errorf("Failed to stat the cert, path: %s, error: %v", path, err)
+	return nil, err
 }
 
 // NewController return an instance of controller

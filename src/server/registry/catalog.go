@@ -16,19 +16,20 @@ package registry
 
 import (
 	"encoding/json"
-	"fmt"
-	"github.com/goharbor/harbor/src/lib/errors"
-	lib_http "github.com/goharbor/harbor/src/lib/http"
-	"github.com/goharbor/harbor/src/pkg/repository"
-	"github.com/goharbor/harbor/src/server/registry/util"
 	"net/http"
 	"sort"
 	"strconv"
+
+	"github.com/goharbor/harbor/src/lib/errors"
+	lib_http "github.com/goharbor/harbor/src/lib/http"
+	"github.com/goharbor/harbor/src/pkg"
+	"github.com/goharbor/harbor/src/pkg/repository"
+	"github.com/goharbor/harbor/src/server/registry/util"
 )
 
 func newRepositoryHandler() http.Handler {
 	return &repositoryHandler{
-		repoMgr: repository.Mgr,
+		repoMgr: pkg.RepositoryMgr,
 	}
 }
 
@@ -73,14 +74,14 @@ func (r *repositoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	}
 
 	// handle the pagination
-	resRepos := repoNames
+	var resRepos []string
 	repoNamesLen := len(repoNames)
 	// with "last", get items form lastEntryIndex+1 to lastEntryIndex+maxEntries
 	// without "last", get items from 0 to maxEntries'
 	if lastEntry != "" {
 		lastEntryIndex := util.IndexString(repoNames, lastEntry)
 		if lastEntryIndex == -1 {
-			err := errors.New(nil).WithCode(errors.BadRequestCode).WithMessage(fmt.Sprintf("the last: %s should be a valid repository name.", lastEntry))
+			err := errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("the last: %s should be a valid repository name.", lastEntry)
 			lib_http.SendError(w, err)
 			return
 		}
@@ -113,11 +114,10 @@ func (r *repositoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	}
 
 	r.sendResponse(w, req, resRepos)
-	return
 }
 
 // sendResponse ...
-func (r *repositoryHandler) sendResponse(w http.ResponseWriter, req *http.Request, repositoryNames []string) {
+func (r *repositoryHandler) sendResponse(w http.ResponseWriter, _ *http.Request, repositoryNames []string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(catalogAPIResponse{

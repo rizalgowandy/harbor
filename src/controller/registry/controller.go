@@ -23,6 +23,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/project"
 	"github.com/goharbor/harbor/src/pkg/reg"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
@@ -64,7 +65,7 @@ func NewController() Controller {
 	return &controller{
 		regMgr: reg.Mgr,
 		repMgr: replication.Mgr,
-		proMgr: project.Mgr,
+		proMgr: pkg.ProjectMgr,
 	}
 }
 
@@ -135,7 +136,7 @@ func (c *controller) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if count > 0 {
-		return errors.New(nil).WithCode(errors.PreconditionCode).WithMessage("the registry %d is referenced by replication policies, cannot delete it", id)
+		return errors.New(nil).WithCode(errors.PreconditionCode).WithMessagef("the registry %d is referenced by replication policies, cannot delete it", id)
 	}
 	// referenced by replication policy as destination registry
 	count, err = c.repMgr.Count(ctx, &q.Query{
@@ -147,7 +148,7 @@ func (c *controller) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if count > 0 {
-		return errors.New(nil).WithCode(errors.PreconditionCode).WithMessage("the registry %d is referenced by replication policies, cannot delete it", id)
+		return errors.New(nil).WithCode(errors.PreconditionCode).WithMessagef("the registry %d is referenced by replication policies, cannot delete it", id)
 	}
 	// referenced by proxy cache project
 	count, err = c.proMgr.Count(ctx, &q.Query{
@@ -159,7 +160,7 @@ func (c *controller) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if count > 0 {
-		return errors.New(nil).WithCode(errors.PreconditionCode).WithMessage("the registry %d is referenced by proxy cache project, cannot delete it", id)
+		return errors.New(nil).WithCode(errors.PreconditionCode).WithMessagef("the registry %d is referenced by proxy cache project, cannot delete it", id)
 	}
 
 	return c.regMgr.Delete(ctx, id)
@@ -282,6 +283,7 @@ func process(info *model.RegistryInfo) *model.RegistryInfo {
 		Values: values,
 	})
 	in.SupportedResourceFilters = filters
+	in.SupportedCopyByChunk = info.SupportedCopyByChunk
 
 	return in
 }

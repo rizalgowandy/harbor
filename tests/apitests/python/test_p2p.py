@@ -12,10 +12,8 @@ from library.project import Project
 from library.user import User
 from library.repository import Repository
 from library.registry import Registry
-from library.repository import pull_harbor_image
 from library.artifact import Artifact
 from library.preheat import Preheat
-import library.containerd
 import v2_swagger_client
 
 class TestP2P(unittest.TestCase):
@@ -55,7 +53,7 @@ class TestP2P(unittest.TestCase):
             2. Delete user(UA).
         """
         user_id, user_name = self.user.create_user(user_password = self.user_password, **ADMIN_CLIENT)
-        USER_CLIENT=dict(with_signature = True, endpoint = self.url, username = user_name, password = self.user_password)
+        USER_CLIENT=dict(endpoint = self.url, username = user_name, password = self.user_password)
 
         #2. Create a new distribution instance;
         instance_id, instance_name = self.preheat.create_instance( **ADMIN_CLIENT)

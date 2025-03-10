@@ -20,44 +20,58 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/lib/q"
 )
 
 // QuerySetter generates the query setter according to the provided model and query.
 // e.g.
-// type Foo struct{
-//   Field1 string `orm:"-"`                         // can not filter/sort
-//   Field2 string `orm:"column(customized_field2)"` // support filter by "Field2", "customized_field2"
-//   Field3 string `sort:"false"`                    // cannot be sorted
-//   Field4 string `sort:"default:desc"`             // the default field/order(asc/desc) to sort if no sorting specified in query.
-//   Field5 string `filter:"false"`                  // cannot be filtered
-// }
+//
+//	type Foo struct{
+//	  Field1 string `orm:"-"`                         // can not filter/sort
+//	  Field2 string `orm:"column(customized_field2)"` // support filter by "Field2", "customized_field2"
+//	  Field3 string `sort:"false"`                    // cannot be sorted
+//	  Field4 string `sort:"default:desc"`             // the default field/order(asc/desc) to sort if no sorting specified in query.
+//	  Field5 string `filter:"false"`                  // cannot be filtered
+//	}
+//
 // // support filter by "Field6", "field6"
-// func (f *Foo) FilterByField6(ctx context.Context, qs orm.QuerySetter, key string, value interface{}) orm.QuerySetter {
-//   ...
-//	 return qs
-// }
+//
+//	func (f *Foo) FilterByField6(ctx context.Context, qs orm.QuerySetter, key string, value interface{}) orm.QuerySetter {
+//	  ...
+//		 return qs
+//	}
 //
 // Defining the method "GetDefaultSorts() []*q.Sort" for the model whose default sorting contains more than one fields
-// type Bar struct{
-//   Field1 string
-//   Field2 string
-// }
+//
+//	type Bar struct{
+//	  Field1 string
+//	  Field2 string
+//	}
+//
 // // Sort by "Field1" desc, "Field2"
-// func (b *Bar) GetDefaultSorts() []*q.Sort {
-//	return []*q.Sort{
-//		{
-//			Key:  "Field1",
-//			DESC: true,
-//		},
-//		{
-//			Key:  "Field2",
-//			DESC: false,
-//		},
-//	 }
-// }
-func QuerySetter(ctx context.Context, model interface{}, query *q.Query) (orm.QuerySeter, error) {
+//
+//	func (b *Bar) GetDefaultSorts() []*q.Sort {
+//		return []*q.Sort{
+//			{
+//				Key:  "Field1",
+//				DESC: true,
+//			},
+//			{
+//				Key:  "Field2",
+//				DESC: false,
+//			},
+//		 }
+//	}
+
+type Config struct {
+	DisableSort bool
+}
+
+type Option func(*Config)
+
+func QuerySetter(ctx context.Context, model interface{}, query *q.Query, options ...Option) (orm.QuerySeter, error) {
 	t := reflect.TypeOf(model)
 	if t.Kind() != reflect.Ptr {
 		return nil, fmt.Errorf("<orm.QuerySetter> cannot use non-ptr model struct `%s`", getFullName(t.Elem()))
@@ -75,8 +89,12 @@ func QuerySetter(ctx context.Context, model interface{}, query *q.Query) (orm.Qu
 	// set filters
 	qs = setFilters(ctx, qs, query, metadata)
 
+	opts := newConfig(options...)
 	// sorting
-	qs = setSorts(qs, query, metadata)
+	// Do not set sort when sort disabled. e.g. for Count()
+	if !opts.DisableSort {
+		qs = setSorts(qs, query, metadata)
+	}
 
 	// pagination
 	if query.PageSize > 0 {
@@ -87,6 +105,20 @@ func QuerySetter(ctx context.Context, model interface{}, query *q.Query) (orm.Qu
 	}
 
 	return qs, nil
+}
+
+func WithSortDisabled(disableSort bool) Option {
+	return func(cfg *Config) {
+		cfg.DisableSort = disableSort
+	}
+}
+
+func newConfig(opts ...Option) *Config {
+	config := &Config{}
+	for _, opt := range opts {
+		opt(config)
+	}
+	return config
 }
 
 // PaginationOnRawSQL append page information to the raw sql
@@ -109,12 +141,12 @@ func PaginationOnRawSQL(query *q.Query, sql string, params []interface{}) (strin
 }
 
 // QuerySetterForCount creates the query setter used for count with the sort and pagination information ignored
-func QuerySetterForCount(ctx context.Context, model interface{}, query *q.Query, ignoredCols ...string) (orm.QuerySeter, error) {
+func QuerySetterForCount(ctx context.Context, model interface{}, query *q.Query, _ ...string) (orm.QuerySeter, error) {
 	query = q.MustClone(query)
 	query.Sorts = nil
 	query.PageSize = 0
 	query.PageNumber = 0
-	return QuerySetter(ctx, model, query)
+	return QuerySetter(ctx, model, query, WithSortDisabled(true))
 }
 
 // set filters according to the query

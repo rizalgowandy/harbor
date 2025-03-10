@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ func (d *Auth) SearchUser(ctx context.Context, username string) (*models.User, e
 }
 
 // OnBoardUser -
-func (d *Auth) OnBoardUser(ctx context.Context, u *models.User) error {
+func (d *Auth) OnBoardUser(_ context.Context, _ *models.User) error {
 	return nil
 }
 

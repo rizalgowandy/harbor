@@ -55,10 +55,11 @@ type Controller interface {
 	//   Arguments:
 	//     ctx context.Context : the context for this method
 	//     artifact *artifact.Artifact : the artifact whose scan job to be stopped
+	//     capType string : the capability type of the scanner, vulnerability or SBOM.
 	//
 	//   Returns:
 	//     error  : non nil error if any errors occurred
-	Stop(ctx context.Context, artifact *artifact.Artifact) error
+	Stop(ctx context.Context, artifact *artifact.Artifact, capType string) error
 
 	// GetReport gets the reports for the given artifact identified by the digest
 	//
@@ -82,7 +83,7 @@ type Controller interface {
 	//   Returns:
 	//     map[string]interface{} : report summaries indexed by mime types
 	//     error                  : non nil error if any errors occurred
-	GetSummary(ctx context.Context, artifact *artifact.Artifact, mimeTypes []string) (map[string]interface{}, error)
+	GetSummary(ctx context.Context, artifact *artifact.Artifact, scanType string, mimeTypes []string) (map[string]interface{}, error)
 
 	// Get the scan log for the specified artifact with the given digest
 	//
@@ -93,16 +94,7 @@ type Controller interface {
 	//   Returns:
 	//     []byte : the log text stream
 	//     error  : non nil error if any errors occurred
-	GetScanLog(ctx context.Context, uuid string) ([]byte, error)
-
-	// Delete the reports related with the specified digests
-	//
-	//  Arguments:
-	//    digests ...string : specify one or more digests whose reports will be deleted
-	//
-	//  Returns:
-	//    error        : non nil error if any errors occurred
-	DeleteReports(ctx context.Context, digests ...string) error
+	GetScanLog(ctx context.Context, art *artifact.Artifact, uuid string) ([]byte, error)
 
 	// Scan all the artifacts
 	//
@@ -115,14 +107,26 @@ type Controller interface {
 	//     error  : non nil error if any errors occurred
 	ScanAll(ctx context.Context, trigger string, async bool) (int64, error)
 
+	// StopScanAll stops the scanAll
+	//
+	//   Arguments:
+	//     ctx context.Context : the context for this method
+	//     executionID int64   : the id of scan all execution
+	//     async bool          : stop scan all in background
+	//   Returns:
+	//     error  : non nil error if any errors occurred
+	StopScanAll(ctx context.Context, executionID int64, async bool) error
+
 	// GetVulnerable returns the vulnerable of the artifact for the allowlist
 	//
 	//   Arguments:
 	//     ctx context.Context : the context for this method
 	//     artifact *artifact.Artifact : artifact to be scanned
+	//     allowlist map[string]struct{} : the set of CVE id of the items in the allowlist
+	//     allowlistIsExpired bool : whether the allowlist is expired
 	//
 	//   Returns
 	//      *Vulnerable : the vulnerable
 	//     error        : non nil error if any errors occurred
-	GetVulnerable(ctx context.Context, artifact *artifact.Artifact, allowlist allowlist.CVESet) (*Vulnerable, error)
+	GetVulnerable(ctx context.Context, artifact *artifact.Artifact, allowlist allowlist.CVESet, allowlistIsExpired bool) (*Vulnerable, error)
 }

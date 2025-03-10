@@ -1,11 +1,25 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package dao
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib/q"
 
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/immutable/dao/model"
 )
 
@@ -55,7 +69,7 @@ func (i *iDao) UpdateImmutableRule(ctx context.Context, projectID int64, ir *mod
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("immutable %d not found", ir.ID)
+		return errors.NotFoundError(nil).WithMessagef("immutable %d not found", ir.ID)
 	}
 	return nil
 }
@@ -72,7 +86,7 @@ func (i *iDao) ToggleImmutableRule(ctx context.Context, id int64, status bool) e
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("immutable %d not found", ir.ID)
+		return errors.NotFoundError(nil).WithMessagef("immutable %d not found", ir.ID)
 	}
 	return nil
 }
@@ -128,7 +142,7 @@ func (i *iDao) DeleteImmutableRule(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("immutable rule %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("immutable rule %d not found", id)
 	}
 	return nil
 }

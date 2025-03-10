@@ -26,6 +26,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scan"
+	"github.com/goharbor/harbor/src/pkg/scan/report"
 	"github.com/goharbor/harbor/src/pkg/scan/vuln"
 )
 
@@ -55,7 +56,6 @@ func NewNativeToRelationalSchemaConverter() NativeScanReportConverter {
 
 // ToRelationalSchema converts the vulnerability report data present as JSON  to the new relational VulnerabilityRecord instance
 func (c *nativeToRelationalSchemaConverter) ToRelationalSchema(ctx context.Context, reportUUID string, registrationUUID string, digest string, reportData string) (string, string, error) {
-
 	if len(reportData) == 0 {
 		log.G(ctx).Infof("There is no vulnerability report to toSchema for report UUID : %s", reportUUID)
 		return reportUUID, "", nil
@@ -64,17 +64,21 @@ func (c *nativeToRelationalSchemaConverter) ToRelationalSchema(ctx context.Conte
 	// parse the raw report with the V1 schema of the report to the normalized structures
 	rawReport := new(vuln.Report)
 	if err := json.Unmarshal([]byte(reportData), &rawReport); err != nil {
-		return "", "", errors.Wrap(err, fmt.Sprintf("Error when toSchema V1 report to V2"))
+		return "", "", errors.Wrap(err, "Error when toSchema V1 report to V2")
 	}
 
 	if err := c.toSchema(ctx, reportUUID, registrationUUID, digest, reportData); err != nil {
-		return "", "", errors.Wrap(err, fmt.Sprintf("Error when converting vulnerability report"))
+		return "", "", errors.Wrap(err, "Error when converting vulnerability report")
+	}
+
+	if err := c.updateReport(ctx, rawReport.Vulnerabilities, reportUUID); err != nil {
+		return "", "", errors.Wrap(err, "Error when updating report")
 	}
 
 	rawReport.Vulnerabilities = nil
 	data, err := json.Marshal(rawReport)
 	if err != nil {
-		return "", "", errors.Wrap(err, fmt.Sprintf("Error when persisting raw report summary"))
+		return "", "", errors.Wrap(err, "Error when persisting raw report summary")
 	}
 
 	return reportUUID, string(data), nil
@@ -94,8 +98,7 @@ func (c *nativeToRelationalSchemaConverter) FromRelationalSchema(ctx context.Con
 	return rp, nil
 }
 
-func (c *nativeToRelationalSchemaConverter) toSchema(ctx context.Context, reportUUID string, registrationUUID string, digest string, rawReportData string) error {
-
+func (c *nativeToRelationalSchemaConverter) toSchema(ctx context.Context, reportUUID string, registrationUUID string, _ string, rawReportData string) error {
 	var vulnReport vuln.Report
 	err := json.Unmarshal([]byte(rawReportData), &vulnReport)
 	if err != nil {
@@ -153,7 +156,7 @@ func (c *nativeToRelationalSchemaConverter) toSchema(ctx context.Context, report
 	var newRecords []*scan.VulnerabilityRecord
 	for _, v := range vulnReport.Vulnerabilities {
 		if !s.Exists(v.Key()) {
-			newRecords = append(newRecords, toVulnerabilityRecord(v, registrationUUID))
+			newRecords = append(newRecords, toVulnerabilityRecord(ctx, v, registrationUUID))
 		}
 	}
 
@@ -195,7 +198,7 @@ func (c *nativeToRelationalSchemaConverter) toSchema(ctx context.Context, report
 	return nil
 }
 
-func (c *nativeToRelationalSchemaConverter) fromSchema(ctx context.Context, reportUUID string, artifactDigest string, reportSummary string, records []*scan.VulnerabilityRecord) (string, error) {
+func (c *nativeToRelationalSchemaConverter) fromSchema(_ context.Context, _ string, artifactDigest string, reportSummary string, records []*scan.VulnerabilityRecord) (string, error) {
 	if len(reportSummary) == 0 {
 		return "", nil
 	}
@@ -211,9 +214,7 @@ func (c *nativeToRelationalSchemaConverter) fromSchema(ctx context.Context, repo
 	}
 	if len(vulnerabilityItems) > 0 {
 		rp.Vulnerabilities = make([]*vuln.VulnerabilityItem, 0)
-		for _, v := range vulnerabilityItems {
-			rp.Vulnerabilities = append(rp.Vulnerabilities, v)
-		}
+		rp.Vulnerabilities = append(rp.Vulnerabilities, vulnerabilityItems...)
 	}
 
 	data, err := json.Marshal(rp)
@@ -234,7 +235,7 @@ func (c *nativeToRelationalSchemaConverter) getNativeV1ReportFromResolvedData(ct
 	return report, nil
 }
 
-func toVulnerabilityRecord(item *vuln.VulnerabilityItem, registrationUUID string) *scan.VulnerabilityRecord {
+func toVulnerabilityRecord(ctx context.Context, item *vuln.VulnerabilityItem, registrationUUID string) *scan.VulnerabilityRecord {
 	record := new(scan.VulnerabilityRecord)
 
 	record.CVEID = item.ID
@@ -265,6 +266,12 @@ func toVulnerabilityRecord(item *vuln.VulnerabilityItem, registrationUUID string
 		if err == nil {
 			record.VendorAttributes = string(vendorAttributes)
 		}
+
+		// parse the NVD score from the vendor attributes
+		nvdScore := parseScoreFromVendorAttribute(ctx, string(vendorAttributes))
+		if record.CVE3Score == nil {
+			record.CVE3Score = &nvdScore
+		}
 	}
 
 	return record
@@ -280,17 +287,12 @@ func toVulnerabilityItem(record *scan.VulnerabilityRecord, artifactDigest string
 	item.CVSSDetails.VectorV2 = record.CVSS2Vector
 	item.CVSSDetails.VectorV3 = record.CVSS3Vector
 	cweIDs := strings.Split(record.CWEIDs, ",")
-	for _, cweID := range cweIDs {
-		item.CWEIds = append(item.CWEIds, cweID)
-	}
-	item.CWEIds = cweIDs
+	item.CWEIds = append(item.CWEIds, cweIDs...)
 	item.Description = record.Description
 	item.FixVersion = record.Fix
 	item.Version = record.PackageVersion
 	urls := strings.Split(record.URLs, "|")
-	for _, url := range urls {
-		item.Links = append(item.Links, url)
-	}
+	item.Links = append(item.Links, urls...)
 	item.Severity = vuln.ParseSeverityVersion3(record.Severity)
 	item.Package = record.Package
 	var vendorAttributes map[string]interface{}
@@ -300,6 +302,80 @@ func toVulnerabilityItem(record *scan.VulnerabilityRecord, artifactDigest string
 	return item
 }
 
-func convertingKey(reportUUID string) string {
-	return fmt.Sprintf("converting:%s", reportUUID)
+// updateReport updates the report summary with the vulnerability counts
+func (c *nativeToRelationalSchemaConverter) updateReport(ctx context.Context, vulnerabilities []*vuln.VulnerabilityItem, reportUUID string) error {
+	log.G(ctx).WithFields(log.Fields{"reportUUID": reportUUID}).Debugf("Update report summary for report")
+	CriticalCnt := int64(0)
+	HighCnt := int64(0)
+	MediumCnt := int64(0)
+	LowCnt := int64(0)
+	NoneCnt := int64(0)
+	UnknownCnt := int64(0)
+	FixableCnt := int64(0)
+
+	for _, v := range vulnerabilities {
+		v.Severity = vuln.ParseSeverityVersion3(v.Severity.String())
+		switch v.Severity {
+		case vuln.Critical:
+			CriticalCnt++
+		case vuln.High:
+			HighCnt++
+		case vuln.Medium:
+			MediumCnt++
+		case vuln.Low:
+			LowCnt++
+		case vuln.None:
+			NoneCnt++
+		case vuln.Unknown:
+			UnknownCnt++
+		}
+		if len(v.FixVersion) > 0 {
+			FixableCnt++
+		}
+	}
+
+	reports, err := report.Mgr.List(ctx, q.New(q.KeyWords{"uuid": reportUUID}))
+	if err != nil {
+		return err
+	}
+	if len(reports) == 0 {
+		return errors.New(nil).WithMessagef("report not found, uuid:%v", reportUUID)
+	}
+	r := reports[0]
+
+	r.CriticalCnt = CriticalCnt
+	r.HighCnt = HighCnt
+	r.MediumCnt = MediumCnt
+	r.LowCnt = LowCnt
+	r.NoneCnt = NoneCnt
+	r.FixableCnt = FixableCnt
+	r.UnknownCnt = UnknownCnt
+
+	return report.Mgr.Update(ctx, r, "CriticalCnt", "HighCnt", "MediumCnt", "LowCnt", "NoneCnt", "UnknownCnt", "FixableCnt")
+}
+
+// CVS ...
+type CVS struct {
+	CVSS map[string]map[string]interface{} `json:"CVSS"`
+}
+
+func parseScoreFromVendorAttribute(ctx context.Context, vendorAttribute string) float64 {
+	var data CVS
+	err := json.Unmarshal([]byte(vendorAttribute), &data)
+	if err != nil {
+		log.G(ctx).Errorf("failed to parse vendor_attribute, error %v", err)
+		return 0
+	}
+
+	// set the nvd as the first priority, if it's unavailable, return the first V3Score available.
+	if val, ok := data.CVSS["nvd"]["V3Score"]; ok {
+		return val.(float64)
+	}
+
+	for vendor := range data.CVSS {
+		if val, ok := data.CVSS[vendor]["V3Score"]; ok {
+			return val.(float64)
+		}
+	}
+	return 0
 }

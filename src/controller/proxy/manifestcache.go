@@ -1,16 +1,16 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package proxy
 
@@ -23,12 +23,13 @@ import (
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/manifest/manifestlist"
 	"github.com/docker/distribution/manifest/schema2"
+	"github.com/opencontainers/go-digest"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/goharbor/harbor/src/lib"
 	libCache "github.com/goharbor/harbor/src/lib/cache"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/opencontainers/go-digest"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const defaultHandler = "default"
@@ -62,24 +63,29 @@ type ManifestListCache struct {
 }
 
 // CacheContent ...
-func (m *ManifestListCache) CacheContent(ctx context.Context, remoteRepo string, man distribution.Manifest, art lib.ArtifactInfo, r RemoteInterface, contentType string) {
+func (m *ManifestListCache) CacheContent(ctx context.Context, _ string, man distribution.Manifest, art lib.ArtifactInfo, _ RemoteInterface, contentType string) {
 	_, payload, err := man.Payload()
 	if err != nil {
 		log.Errorf("failed to get payload, error %v", err)
 		return
 	}
-	key := manifestListKey(art.Repository, art.Digest)
+	if len(getReference(art)) == 0 {
+		log.Errorf("failed to get reference, reference is empty, skip to cache manifest list")
+		return
+	}
+	// cache key should contain digest if digest exist
+	if len(art.Digest) == 0 {
+		art.Digest = string(digest.FromBytes(payload))
+	}
+	key := manifestListKey(art.Repository, art)
 	log.Debugf("cache manifest list with key=cache:%v", key)
-	err = m.cache.Save(ctx, manifestListContentTypeKey(art.Repository, art.Digest), contentType, manifestListCacheInterval)
-	if err != nil {
+	if err := m.cache.Save(ctx, manifestListContentTypeKey(art.Repository, art), contentType, manifestListCacheInterval); err != nil {
 		log.Errorf("failed to cache content type, error %v", err)
 	}
-	err = m.cache.Save(ctx, key, payload, manifestListCacheInterval)
-	if err != nil {
+	if err := m.cache.Save(ctx, key, payload, manifestListCacheInterval); err != nil {
 		log.Errorf("failed to cache payload, error %v", err)
 	}
-	err = m.push(ctx, art.Repository, getReference(art), man)
-	if err != nil {
+	if err := m.push(ctx, art.Repository, getReference(art), man); err != nil {
 		log.Errorf("error when push manifest list to local :%v", err)
 	}
 }
@@ -97,7 +103,6 @@ func (m *ManifestListCache) cacheTrimmedDigest(ctx context.Context, newDig strin
 		return
 	}
 	log.Debugf("Saved key:%v, value:%v", key, newDig)
-
 }
 
 func (m *ManifestListCache) updateManifestList(ctx context.Context, repo string, manifest distribution.Manifest) (distribution.Manifest, error) {
@@ -169,7 +174,7 @@ type ManifestCache struct {
 }
 
 // CacheContent ...
-func (m *ManifestCache) CacheContent(ctx context.Context, remoteRepo string, man distribution.Manifest, art lib.ArtifactInfo, r RemoteInterface, contentType string) {
+func (m *ManifestCache) CacheContent(ctx context.Context, remoteRepo string, man distribution.Manifest, art lib.ArtifactInfo, r RemoteInterface, _ string) {
 	var waitBlobs []distribution.Descriptor
 	for n := 0; n < maxManifestWait; n++ {
 		time.Sleep(sleepIntervalSec * time.Second)

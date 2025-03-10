@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	cachetesting "github.com/goharbor/harbor/src/testing/lib/cache"
-	"github.com/goharbor/harbor/src/testing/mock"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/testing/mock"
 )
 
 type Foobar struct {
@@ -41,7 +41,7 @@ func (suite *FetchOrSaveTestSuite) SetupSuite() {
 }
 
 func (suite *FetchOrSaveTestSuite) TestFetchInternalError() {
-	c := &cachetesting.Cache{}
+	c := &mockCache{}
 
 	mock.OnAnything(c, "Fetch").Return(fmt.Errorf("oops"))
 
@@ -54,7 +54,7 @@ func (suite *FetchOrSaveTestSuite) TestFetchInternalError() {
 }
 
 func (suite *FetchOrSaveTestSuite) TestBuildError() {
-	c := &cachetesting.Cache{}
+	c := &mockCache{}
 
 	mock.OnAnything(c, "Fetch").Return(ErrNotFound)
 
@@ -67,7 +67,7 @@ func (suite *FetchOrSaveTestSuite) TestBuildError() {
 }
 
 func (suite *FetchOrSaveTestSuite) TestSaveError() {
-	c := &cachetesting.Cache{}
+	c := &mockCache{}
 
 	mock.OnAnything(c, "Fetch").Return(ErrNotFound)
 	mock.OnAnything(c, "Save").Return(fmt.Errorf("oops"))
@@ -82,7 +82,7 @@ func (suite *FetchOrSaveTestSuite) TestSaveError() {
 }
 
 func (suite *FetchOrSaveTestSuite) TestSaveCalledOnlyOneTime() {
-	c := &cachetesting.Cache{}
+	c := &mockCache{}
 
 	var data sync.Map
 

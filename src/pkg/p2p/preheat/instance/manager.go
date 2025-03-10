@@ -1,10 +1,23 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package instance
 
 import (
 	"context"
 
 	"github.com/goharbor/harbor/src/lib/q"
-
 	dao "github.com/goharbor/harbor/src/pkg/p2p/preheat/dao/instance"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
 )
@@ -101,12 +114,30 @@ func (dm *manager) Update(ctx context.Context, inst *provider.Instance, props ..
 
 // Get implements @Manager.Get
 func (dm *manager) Get(ctx context.Context, id int64) (*provider.Instance, error) {
-	return dm.dao.Get(ctx, id)
+	ins, err := dm.dao.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ins.Decode(); err != nil {
+		return nil, err
+	}
+
+	return ins, nil
 }
 
 // Get implements @Manager.GetByName
 func (dm *manager) GetByName(ctx context.Context, name string) (*provider.Instance, error) {
-	return dm.dao.GetByName(ctx, name)
+	ins, err := dm.dao.GetByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ins.Decode(); err != nil {
+		return nil, err
+	}
+
+	return ins, nil
 }
 
 // Count implements @Manager.Count
@@ -116,5 +147,16 @@ func (dm *manager) Count(ctx context.Context, query *q.Query) (int64, error) {
 
 // List implements @Manager.List
 func (dm *manager) List(ctx context.Context, query *q.Query) ([]*provider.Instance, error) {
-	return dm.dao.List(ctx, query)
+	inss, err := dm.dao.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range inss {
+		if err := inss[i].Decode(); err != nil {
+			return nil, err
+		}
+	}
+
+	return inss, nil
 }

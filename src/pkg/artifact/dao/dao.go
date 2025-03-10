@@ -20,7 +20,8 @@ import (
 	"strings"
 	"time"
 
-	beegoorm "github.com/astaxie/beego/orm"
+	beegoorm "github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
@@ -53,6 +54,8 @@ type DAO interface {
 	DeleteReference(ctx context.Context, id int64) (err error)
 	// DeleteReferences deletes the references referenced by the artifact specified by parent ID
 	DeleteReferences(ctx context.Context, parentID int64) (err error)
+	// ListWithLatest ...
+	ListWithLatest(ctx context.Context, query *q.Query) (artifacts []*Artifact, err error)
 }
 
 const (
@@ -72,6 +75,10 @@ const (
 	tagged = `=id AND EXISTS (
 		SELECT 1 FROM tag WHERE tag.artifact_id = T0.id
 	)`
+	// accessory filter: filter out the accessory
+	notacc = `=id AND NOT EXISTS (
+		SELECT 1 FROM artifact_accessory aa WHERE aa.artifact_id = T0.id
+	)`
 )
 
 // New returns an instance of the default DAO
@@ -88,7 +95,7 @@ func (d *dao) Count(ctx context.Context, query *q.Query) (int64, error) {
 			Keywords: query.Keywords,
 		}
 	}
-	qs, err := querySetter(ctx, query)
+	qs, err := querySetter(ctx, query, orm.WithSortDisabled(true))
 	if err != nil {
 		return 0, err
 	}
@@ -103,6 +110,7 @@ func (d *dao) List(ctx context.Context, query *q.Query) ([]*Artifact, error) {
 	if _, err = qs.All(&artifacts); err != nil {
 		return nil, err
 	}
+
 	return artifacts, nil
 }
 func (d *dao) Get(ctx context.Context, id int64) (*Artifact, error) {
@@ -138,7 +146,7 @@ func (d *dao) GetByDigest(ctx context.Context, repository, digest string) (*Arti
 	}
 	if len(artifacts) == 0 {
 		return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-			WithMessage("artifact %s@%s not found", repository, digest)
+			WithMessagef("artifact %s@%s not found", repository, digest)
 	}
 	return artifacts[0], nil
 }
@@ -173,7 +181,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("artifact %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("artifact %d not found", id)
 	}
 
 	return nil
@@ -189,7 +197,7 @@ func (d *dao) Update(ctx context.Context, artifact *Artifact, props ...string) e
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("artifact %d not found", artifact.ID)
+		return errors.NotFoundError(nil).WithMessagef("artifact %d not found", artifact.ID)
 	}
 	return nil
 }
@@ -253,7 +261,7 @@ func (d *dao) DeleteReference(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("artifact reference %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("artifact reference %d not found", id)
 	}
 	return nil
 }
@@ -276,8 +284,55 @@ func (d *dao) DeleteReferences(ctx context.Context, parentID int64) error {
 	return err
 }
 
-func querySetter(ctx context.Context, query *q.Query) (beegoorm.QuerySeter, error) {
-	qs, err := orm.QuerySetter(ctx, &Artifact{}, query)
+func (d *dao) ListWithLatest(ctx context.Context, query *q.Query) (artifacts []*Artifact, err error) {
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	sql := `SELECT a.*
+	FROM artifact a
+	JOIN (
+		SELECT repository_name, MAX(push_time) AS latest_push_time
+	FROM artifact
+	WHERE project_id = ? and %s = ?
+	GROUP BY repository_name
+	) latest ON a.repository_name = latest.repository_name AND a.push_time = latest.latest_push_time`
+
+	queryParam := make([]interface{}, 0)
+	var ok bool
+	var pid interface{}
+	if pid, ok = query.Keywords["ProjectID"]; !ok {
+		return nil, errors.New(nil).WithCode(errors.BadRequestCode).
+			WithMessage(`the value of "ProjectID" must be set`)
+	}
+	queryParam = append(queryParam, pid)
+
+	var attributionValue interface{}
+	if attributionValue, ok = query.Keywords["media_type"]; ok {
+		sql = fmt.Sprintf(sql, "media_type")
+	} else if attributionValue, ok = query.Keywords["artifact_type"]; ok {
+		sql = fmt.Sprintf(sql, "artifact_type")
+	}
+
+	if attributionValue == "" {
+		return nil, errors.New(nil).WithCode(errors.BadRequestCode).
+			WithMessage(`the value of "media_type" or "artifact_type" must be set`)
+	}
+	queryParam = append(queryParam, attributionValue)
+
+	sql, queryParam = orm.PaginationOnRawSQL(query, sql, queryParam)
+	arts := []*Artifact{}
+	_, err = ormer.Raw(sql, queryParam...).QueryRows(&arts)
+	if err != nil {
+		return nil, err
+	}
+
+	return arts, nil
+}
+
+func querySetter(ctx context.Context, query *q.Query, options ...orm.Option) (beegoorm.QuerySeter, error) {
+	qs, err := orm.QuerySetter(ctx, &Artifact{}, query, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +345,10 @@ func querySetter(ctx context.Context, query *q.Query) (beegoorm.QuerySeter, erro
 		return nil, err
 	}
 	qs, err = setLabelQuery(qs, query)
+	if err != nil {
+		return nil, err
+	}
+	qs, err = setAccessoryQuery(qs, query)
 	if err != nil {
 		return nil, err
 	}
@@ -402,5 +461,15 @@ func setLabelQuery(qs beegoorm.QuerySeter, query *q.Query) (beegoorm.QuerySeter,
 		collections = append(collections, fmt.Sprintf(`SELECT artifact_id FROM label_reference WHERE label_id=%d`, labelID))
 	}
 	qs = qs.FilterRaw("id", fmt.Sprintf(`IN (%s)`, strings.Join(collections, " INTERSECT ")))
+	return qs, nil
+}
+
+// filter out the accessory for results
+func setAccessoryQuery(qs beegoorm.QuerySeter, query *q.Query) (beegoorm.QuerySeter, error) {
+	if query == nil {
+		return qs, nil
+	}
+
+	qs = qs.FilterRaw("id", notacc)
 	return qs, nil
 }

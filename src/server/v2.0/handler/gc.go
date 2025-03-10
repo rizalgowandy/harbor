@@ -1,16 +1,33 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handler
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
 	"os"
 	"strings"
 
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/gc"
+	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/task"
@@ -30,7 +47,7 @@ func newGCAPI() *gcAPI {
 	}
 }
 
-func (g *gcAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (g *gcAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
 	return nil
 }
 
@@ -83,6 +100,17 @@ func (g *gcAPI) kick(ctx context.Context, scheType string, cron string, paramete
 		if deleteUntagged, ok := parameters["delete_untagged"].(bool); ok {
 			policy.DeleteUntagged = deleteUntagged
 		}
+		if workers, ok := parameters["workers"].(json.Number); ok {
+			wInt, err := workers.Int64()
+			if err != nil {
+				return 0, errors.BadRequestError(fmt.Errorf("workers should be integer format"))
+			}
+			if !validateWorkers(int(wInt)) {
+				return 0, errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("Error: Invalid number of workers:%s. Workers must be greater than 0 and less than or equal to 10.", workers)
+			}
+			policy.Workers = int(wInt)
+		}
+
 		id, err = g.gcCtr.Start(ctx, policy, task.ExecutionTriggerManual)
 	case ScheduleNone:
 		err = g.gcCtr.DeleteSchedule(ctx)
@@ -96,16 +124,22 @@ func (g *gcAPI) kick(ctx context.Context, scheType string, cron string, paramete
 		if deleteUntagged, ok := parameters["delete_untagged"].(bool); ok {
 			policy.DeleteUntagged = deleteUntagged
 		}
+		if workers, ok := parameters["workers"].(json.Number); ok {
+			wInt, err := workers.Int64()
+			if err != nil {
+				return 0, errors.BadRequestError(fmt.Errorf("workers should be integer format"))
+			}
+			if !validateWorkers(int(wInt)) {
+				return 0, errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("Error: Invalid number of workers:%s. Workers must be greater than 0 and less than or equal to 10.", workers)
+			}
+			policy.Workers = int(wInt)
+		}
 		err = g.updateSchedule(ctx, scheType, cron, policy)
 	}
 	return id, err
 }
 
 func (g *gcAPI) createSchedule(ctx context.Context, cronType, cron string, policy gc.Policy) error {
-	if cron == "" {
-		return errors.New(nil).WithCode(errors.BadRequestCode).
-			WithMessage("empty cron string for gc schedule")
-	}
 	_, err := g.gcCtr.CreateSchedule(ctx, cronType, cron, policy)
 	if err != nil {
 		return err
@@ -114,13 +148,17 @@ func (g *gcAPI) createSchedule(ctx context.Context, cronType, cron string, polic
 }
 
 func (g *gcAPI) updateSchedule(ctx context.Context, cronType, cron string, policy gc.Policy) error {
+	if err := utils.ValidateCronString(cron); err != nil {
+		return errors.New(nil).WithCode(errors.BadRequestCode).
+			WithMessagef("invalid cron string for scheduled gc: %s, error: %v", cron, err)
+	}
 	if err := g.gcCtr.DeleteSchedule(ctx); err != nil {
 		return err
 	}
 	return g.createSchedule(ctx, cronType, cron, policy)
 }
 
-func (g *gcAPI) GetGCSchedule(ctx context.Context, params operation.GetGCScheduleParams) middleware.Responder {
+func (g *gcAPI) GetGCSchedule(ctx context.Context, _ operation.GetGCScheduleParams) middleware.Responder {
 	if err := g.RequireSystemAccess(ctx, rbac.ActionRead, rbac.ResourceGarbageCollection); err != nil {
 		return g.SendError(ctx, err)
 	}
@@ -160,7 +198,7 @@ func (g *gcAPI) GetGCHistory(ctx context.Context, params operation.GetGCHistoryP
 		}
 		hs = append(hs, &model.GCHistory{
 			ID:         exec.ID,
-			Name:       gc.GCVendorType,
+			Name:       job.GarbageCollectionVendorType,
 			Kind:       exec.Trigger,
 			Parameters: string(extraAttrsString),
 			Schedule: &model.ScheduleParam{
@@ -168,7 +206,7 @@ func (g *gcAPI) GetGCHistory(ctx context.Context, params operation.GetGCHistoryP
 			},
 			Status:       exec.Status,
 			CreationTime: exec.StartTime,
-			UpdateTime:   exec.EndTime,
+			UpdateTime:   exec.UpdateTime,
 		})
 	}
 
@@ -199,7 +237,7 @@ func (g *gcAPI) GetGC(ctx context.Context, params operation.GetGCParams) middlew
 
 	res := &model.GCHistory{
 		ID:         exec.ID,
-		Name:       gc.GCVendorType,
+		Name:       job.GarbageCollectionVendorType,
 		Kind:       exec.Trigger,
 		Parameters: string(extraAttrsString),
 		Status:     exec.Status,
@@ -207,7 +245,7 @@ func (g *gcAPI) GetGC(ctx context.Context, params operation.GetGCParams) middlew
 			Type: exec.Trigger,
 		},
 		CreationTime: exec.StartTime,
-		UpdateTime:   exec.EndTime,
+		UpdateTime:   exec.UpdateTime,
 	}
 
 	return operation.NewGetGCOK().WithPayload(res.ToSwagger())
@@ -224,11 +262,30 @@ func (g *gcAPI) GetGCLog(ctx context.Context, params operation.GetGCLogParams) m
 		return g.SendError(ctx, err)
 	}
 	if len(tasks) == 0 {
-		return g.SendError(ctx, errors.New(nil).WithCode(errors.NotFoundCode).WithMessage("garbage collection %d log is not found", params.GCID))
+		return g.SendError(ctx, errors.New(nil).WithCode(errors.NotFoundCode).WithMessagef("garbage collection %d log is not found", params.GCID))
 	}
 	log, err := g.gcCtr.GetTaskLog(ctx, tasks[0].ID)
 	if err != nil {
 		return g.SendError(ctx, err)
 	}
 	return operation.NewGetGCLogOK().WithPayload(string(log))
+}
+
+func (g *gcAPI) StopGC(ctx context.Context, params operation.StopGCParams) middleware.Responder {
+	if err := g.RequireSystemAccess(ctx, rbac.ActionStop, rbac.ResourceGarbageCollection); err != nil {
+		return g.SendError(ctx, err)
+	}
+
+	if err := g.gcCtr.Stop(ctx, params.GCID); err != nil {
+		return g.SendError(ctx, err)
+	}
+
+	return operation.NewStopGCOK()
+}
+
+func validateWorkers(workers int) bool {
+	if workers <= 0 || workers > 10 {
+		return false
+	}
+	return true
 }

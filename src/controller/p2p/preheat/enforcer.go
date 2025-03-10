@@ -20,10 +20,12 @@ import (
 	"strings"
 
 	tk "github.com/docker/distribution/registry/auth/token"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/scan"
-	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/core/service/token"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/config"
@@ -42,11 +44,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/scan/vuln"
 	"github.com/goharbor/harbor/src/pkg/task"
 )
-
-func init() {
-	// keep only the latest created 50 p2p preheat execution records
-	task.SetExecutionSweeperCount(job.P2PPreheat, 50)
-}
 
 const (
 	defaultSeverityCode     = 99
@@ -355,9 +352,6 @@ func (de *defaultEnforcer) getCandidates(ctx context.Context, ps *pol.Schema, p 
 	}, &artifact.Option{
 		WithLabel: true,
 		WithTag:   true,
-		TagOption: &tag.Option{
-			WithSignature: true,
-		},
 	})
 	if err != nil {
 		return nil, err
@@ -380,7 +374,7 @@ func (de *defaultEnforcer) launchExecutions(ctx context.Context, candidates []*s
 		attrs[extraAttrTriggerSetting] = "-"
 	}
 
-	eid, err := de.executionMgr.Create(ctx, job.P2PPreheat, pl.ID, pl.Trigger.Type, attrs)
+	eid, err := de.executionMgr.Create(ctx, job.P2PPreheatVendorType, pl.ID, pl.Trigger.Type, attrs)
 	if err != nil {
 		return -1, err
 	}
@@ -408,7 +402,7 @@ func (de *defaultEnforcer) launchExecutions(ctx context.Context, candidates []*s
 	// Start tasks
 	count := 0
 	for _, c := range candidates {
-		if _, err = de.startTask(ctx, eid, c, insData); err != nil {
+		if _, err = de.startTask(ctx, eid, c, insData, pl.ExtraAttrs); err != nil {
 			// Just log the error and skip
 			log.Errorf("start task error for preheating image: %s/%s:%s@%s", c.Namespace, c.Repository, c.Tags[0], c.Digest)
 			continue
@@ -427,7 +421,7 @@ func (de *defaultEnforcer) launchExecutions(ctx context.Context, candidates []*s
 }
 
 // startTask starts the preheat task(job) for the given candidate
-func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, candidate *selector.Candidate, instance string) (int64, error) {
+func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, candidate *selector.Candidate, instance string, extraAttrs map[string]interface{}) (int64, error) {
 	u, err := de.fullURLGetter(candidate)
 	if err != nil {
 		return -1, err
@@ -444,9 +438,10 @@ func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, can
 		Headers: map[string]interface{}{
 			accessCredHeaderKey: cred,
 		},
-		ImageName: fmt.Sprintf("%s/%s", candidate.Namespace, candidate.Repository),
-		Tag:       candidate.Tags[0],
-		Digest:    candidate.Digest,
+		ImageName:  fmt.Sprintf("%s/%s", candidate.Namespace, candidate.Repository),
+		Tag:        candidate.Tags[0],
+		Digest:     candidate.Digest,
+		ExtraAttrs: extraAttrs,
 	}
 
 	piData, err := pi.ToJSON()
@@ -455,7 +450,7 @@ func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, can
 	}
 
 	j := &task.Job{
-		Name: job.P2PPreheat,
+		Name: job.P2PPreheatVendorType,
 		Parameters: job.Parameters{
 			preheat.PreheatParamProvider: instance,
 			preheat.PreheatParamImage:    piData,
@@ -480,7 +475,7 @@ func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, can
 
 // getVulnerabilitySev gets the severity code value for the given artifact with allowlist option set
 func (de *defaultEnforcer) getVulnerabilitySev(ctx context.Context, p *proModels.Project, art *artifact.Artifact) (uint, error) {
-	vulnerable, err := de.scanCtl.GetVulnerable(ctx, art, p.CVEAllowlist.CVESet())
+	vulnerable, err := de.scanCtl.GetVulnerable(ctx, art, p.CVEAllowlist.CVESet(), p.CVEAllowlist.IsExpired())
 	if err != nil {
 		if errors.IsNotFoundErr(err) {
 			// no vulnerability report
@@ -519,16 +514,13 @@ func (de *defaultEnforcer) toCandidates(ctx context.Context, p *proModels.Projec
 		// TODO: Do we need to support untagged artifacts here?
 		for _, t := range a.Tags {
 			candidates = append(candidates, &selector.Candidate{
-				NamespaceID: p.ProjectID,
-				Namespace:   p.Name,
-				Repository:  pureRepository(p.Name, a.RepositoryName),
-				Kind:        pr.SupportedType,
-				Digest:      a.Digest,
-				Tags:        []string{t.Name},
-				Labels:      getLabels(a.Labels),
-				Signatures: map[string]bool{
-					t.Name: t.Signed,
-				},
+				NamespaceID:           p.ProjectID,
+				Namespace:             p.Name,
+				Repository:            pureRepository(p.Name, a.RepositoryName),
+				Kind:                  pr.SupportedType,
+				Digest:                a.Digest,
+				Tags:                  []string{t.Name},
+				Labels:                getLabels(a.Labels),
 				VulnerabilitySeverity: sev,
 			})
 		}
@@ -625,7 +617,8 @@ func overrideSecuritySettings(p *pol.Schema, pro *proModels.Project) [][]interfa
 	// Append vulnerability filter if vulnerability severity config is set at project configurations
 	if v, ok := pro.Metadata[proMetaKeyVulnerability]; ok && v == "true" {
 		if se, ok := pro.Metadata[proMetaKeySeverity]; ok && len(se) > 0 {
-			se = strings.Title(strings.ToLower(se))
+			title := cases.Title(language.Und)
+			se = title.String(strings.ToLower(se))
 			code := vuln.Severity(se).Code()
 			filters = append(filters, &pol.Filter{
 				Type:  pol.FilterTypeVulnerability,

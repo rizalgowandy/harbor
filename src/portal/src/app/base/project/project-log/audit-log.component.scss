@@ -26,17 +26,24 @@
 .display-f{
     display: flex;
 }
+
 .reverse-row {
     display: flex;
     flex-direction: row-reverse;
     align-items: baseline;
 }
+
 .flex-items-xs-right {
     display: flex;
     align-items: baseline;
+
     ::ng-deep {
         clr-date-container{
             margin-top: 0;
         }
     }
+}
+
+.width-140 {
+    width: 140px;
 }

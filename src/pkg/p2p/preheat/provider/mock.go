@@ -16,12 +16,13 @@ package provider
 
 import (
 	"encoding/json"
-	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/notification"
-	"io/ioutil"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"time"
+
+	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/notification"
 )
 
 // This is a package to provide mock utilities.
@@ -31,71 +32,146 @@ var preheatMap = make(map[string]struct{})
 func MockDragonflyProvider() *httptest.Server {
 	return httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.RequestURI {
-		case healthCheckEndpoint:
+		case dragonflyHealthPath:
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusNotImplemented)
 				return
 			}
 
 			w.WriteHeader(http.StatusOK)
-		case preheatEndpoint:
+		case dragonflyJobPath:
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusNotImplemented)
 				return
 			}
 
-			data, err := ioutil.ReadAll(r.Body)
+			var resp = &dragonflyJobResponse{
+				ID:        0,
+				State:     dragonflyJobPendingState,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+
+			bytes, err := json.Marshal(resp)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte(err.Error()))
 				return
 			}
 
-			image := &PreheatImage{}
-			if err := json.Unmarshal(data, image); err != nil {
+			if _, err := w.Write(bytes); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte(err.Error()))
 				return
 			}
 
-			if image.ImageName == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			if _, ok := preheatMap[image.Digest]; ok {
-				w.WriteHeader(http.StatusAlreadyReported)
-				_, _ = w.Write([]byte(`{"ID":""}`))
-				return
-			}
-
-			preheatMap[image.Digest] = struct{}{}
-
-			if image.Type == "image" &&
-				image.URL == "https://harbor.com" &&
-				image.ImageName == "busybox" &&
-				image.Tag == "latest" {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"ID":"dragonfly-id"}`))
-				return
-			}
-
-			w.WriteHeader(http.StatusBadRequest)
-		case strings.Replace(preheatTaskEndpoint, "{task_id}", "dragonfly-id", 1):
+			w.WriteHeader(http.StatusOK)
+		case fmt.Sprintf("%s/%s", dragonflyJobPath, "0"):
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusNotImplemented)
 				return
 			}
-			status := &dragonflyPreheatInfo{
-				ID:         "dragonfly-id",
-				StartTime:  time.Now().UTC().String(),
-				FinishTime: time.Now().Add(5 * time.Minute).UTC().String(),
-				Status:     "SUCCESS",
+
+			var resp = &dragonflyJobResponse{
+				ID:        1,
+				State:     dragonflyJobSuccessState,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
 			}
-			bytes, _ := json.Marshal(status)
-			_, _ = w.Write(bytes)
-		default:
-			w.WriteHeader(http.StatusNotImplemented)
+
+			bytes, err := json.Marshal(resp)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			if _, err := w.Write(bytes); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+		case fmt.Sprintf("%s/%s", dragonflyJobPath, "1"):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+
+			var resp = &dragonflyJobResponse{
+				ID:        1,
+				State:     dragonflyJobPendingState,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+
+			bytes, err := json.Marshal(resp)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			if _, err := w.Write(bytes); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+		case fmt.Sprintf("%s/%s", dragonflyJobPath, "2"):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+
+			var resp = &dragonflyJobResponse{
+				ID:        2,
+				State:     dragonflyJobSuccessState,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+
+			bytes, err := json.Marshal(resp)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			if _, err := w.Write(bytes); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+		case fmt.Sprintf("%s/%s", dragonflyJobPath, "3"):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+
+			var resp = &dragonflyJobResponse{
+				ID:        3,
+				State:     dragonflyJobFailureState,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+
+			bytes, err := json.Marshal(resp)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			if _, err := w.Write(bytes); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
 		}
 	}))
 }
@@ -117,7 +193,7 @@ func MockKrakenProvider() *httptest.Server {
 				return
 			}
 
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte(err.Error()))

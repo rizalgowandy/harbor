@@ -19,21 +19,48 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+	"golang.org/x/sync/singleflight"
+
+	// quota driver
+	_ "github.com/goharbor/harbor/src/controller/quota/driver"
+	"github.com/goharbor/harbor/src/lib/cache"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/gtask"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+	libredis "github.com/goharbor/harbor/src/lib/redis"
 	"github.com/goharbor/harbor/src/lib/retry"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/driver"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 
-	// quota driver
-	_ "github.com/goharbor/harbor/src/controller/quota/driver"
+	// init the db config
+	_ "github.com/goharbor/harbor/src/pkg/config/db"
 )
+
+func init() {
+	// register the async task for flushing quota to db when enable update quota by redis
+	if provider := config.GetQuotaUpdateProvider(); provider == updateQuotaProviderRedis.String() {
+		gtask.DefaultPool().AddTask(flushQuota, 30*time.Second)
+	}
+}
+
+type updateQuotaProviderType string
+
+func (t updateQuotaProviderType) String() string {
+	return string(t)
+}
 
 var (
 	defaultRetryTimeout = time.Minute * 5
+	// quotaExpireTimeout is the expire time for quota when update quota by redis
+	quotaExpireTimeout = time.Minute * 5
+
+	updateQuotaProviderRedis updateQuotaProviderType = "redis"
+	updateQuotaProviderDB    updateQuotaProviderType = "db"
 )
 
 var (
@@ -88,6 +115,32 @@ type controller struct {
 	reservedExpiration time.Duration
 
 	quotaMgr quota.Manager
+	g        singleflight.Group
+}
+
+// flushQuota flushes the quota info from redis to db asynchronously.
+func flushQuota(ctx context.Context) {
+	iter, err := cache.Default().Scan(ctx, "quota:*")
+	if err != nil {
+		log.Errorf("failed to scan out the quota records from redis")
+		return
+	}
+
+	for iter.Next(ctx) {
+		key := iter.Val()
+		q := &quota.Quota{}
+		err = cache.Default().Fetch(ctx, key, q)
+		if err != nil {
+			log.Errorf("failed to fetch quota: %s, error: %v", key, err)
+			continue
+		}
+
+		if err = Ctl.Update(ctx, q); err != nil {
+			log.Errorf("failed to refresh quota: %s, error: %v", key, err)
+		} else {
+			log.Debugf("successfully refreshed quota: %s", key)
+		}
+	}
 }
 
 func (c *controller) Count(ctx context.Context, query *q.Query) (int64, error) {
@@ -164,11 +217,81 @@ func (c *controller) List(ctx context.Context, query *q.Query, options ...Option
 	return quotas, nil
 }
 
-func (c *controller) updateUsageWithRetry(ctx context.Context, reference, referenceID string, op func(hardLimits, used types.ResourceList) (types.ResourceList, error)) error {
-	f := func() error {
-		q, err := c.quotaMgr.GetByRef(ctx, reference, referenceID)
-		if err != nil {
+// updateUsageByDB updates the quota usage by the database which updates the quota usage immediately.
+func (c *controller) updateUsageByDB(ctx context.Context, reference, referenceID string, op func(hardLimits, used types.ResourceList) (types.ResourceList, error)) error {
+	q, err := c.quotaMgr.GetByRef(ctx, reference, referenceID)
+	if err != nil {
+		return retry.Abort(err)
+	}
+
+	hardLimits, err := q.GetHard()
+	if err != nil {
+		return retry.Abort(err)
+	}
+
+	used, err := q.GetUsed()
+	if err != nil {
+		return retry.Abort(err)
+	}
+
+	newUsed, err := op(hardLimits, used)
+	if err != nil {
+		return retry.Abort(err)
+	}
+
+	// The PR https://github.com/goharbor/harbor/pull/17392 optimized the logic for post upload blob which use size 0
+	// for checking quota, this will increase the pressure of optimistic lock, so here return earlier
+	// if the quota usage has not changed to reduce the probability of optimistic lock.
+	if types.Equals(used, newUsed) {
+		return nil
+	}
+
+	q.SetUsed(newUsed)
+
+	err = c.quotaMgr.Update(ctx, q)
+	if err != nil && !errors.Is(err, orm.ErrOptimisticLock) {
+		return retry.Abort(err)
+	}
+
+	return err
+}
+
+// updateUsageByRedis updates the quota usage by the redis and flush the quota usage to db asynchronously.
+func (c *controller) updateUsageByRedis(ctx context.Context, reference, referenceID string, op func(hardLimits, used types.ResourceList) (types.ResourceList, error)) error {
+	// earlier abort if context is error such as context canceled
+	if ctx.Err() != nil {
+		return retry.Abort(ctx.Err())
+	}
+
+	client, err := libredis.GetHarborClient()
+	if err != nil {
+		return retry.Abort(err)
+	}
+	// normally use cache.Save will append prefix "cache:", in order to keep consistent
+	// here adopts raw redis client should also pad the prefix manually.
+	key := fmt.Sprintf("%s:quota:%s:%s", "cache", reference, referenceID)
+	return client.Watch(ctx, func(tx *redis.Tx) error {
+		data, err := tx.Get(ctx, key).Result()
+		if err != nil && err != redis.Nil {
 			return retry.Abort(err)
+		}
+
+		q := &quota.Quota{}
+		// calc the quota usage in real time if no key found
+		if err == redis.Nil {
+			// use singleflight to prevent cache penetration and cause pressure on the database.
+			realQuota, err, _ := c.g.Do(key, func() (interface{}, error) {
+				return c.calcQuota(ctx, reference, referenceID)
+			})
+			if err != nil {
+				return retry.Abort(err)
+			}
+
+			q = realQuota.(*quota.Quota)
+		} else {
+			if err = cache.DefaultCodec().Decode([]byte(data), q); err != nil {
+				return retry.Abort(err)
+			}
 		}
 
 		hardLimits, err := q.GetHard()
@@ -188,21 +311,54 @@ func (c *controller) updateUsageWithRetry(ctx context.Context, reference, refere
 
 		q.SetUsed(newUsed)
 
-		err = c.quotaMgr.Update(ctx, q)
-		if err != nil && !errors.Is(err, orm.ErrOptimisticLock) {
+		val, err := cache.DefaultCodec().Encode(q)
+		if err != nil {
+			return retry.Abort(err)
+		}
+
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			_, err = p.Set(ctx, key, val, quotaExpireTimeout).Result()
+			return err
+		})
+
+		if err != nil && err != redis.TxFailedErr {
 			return retry.Abort(err)
 		}
 
 		return err
+	}, key)
+}
+
+func (c *controller) updateUsageWithRetry(ctx context.Context, reference, referenceID string, op func(hardLimits, used types.ResourceList) (types.ResourceList, error), provider updateQuotaProviderType, retryOpts ...retry.Option) error {
+	var f func() error
+	switch provider {
+	case updateQuotaProviderDB:
+		f = func() error {
+			return c.updateUsageByDB(ctx, reference, referenceID, op)
+		}
+	case updateQuotaProviderRedis:
+		f = func() error {
+			return c.updateUsageByRedis(ctx, reference, referenceID, op)
+		}
+	default:
+		// by default is update quota by db
+		f = func() error {
+			return c.updateUsageByDB(ctx, reference, referenceID, op)
+		}
 	}
 
 	options := []retry.Option{
 		retry.Timeout(defaultRetryTimeout),
 		retry.Backoff(false),
-		retry.Callback(func(err error, sleep time.Duration) {
+		retry.Callback(func(err error, _ time.Duration) {
 			log.G(ctx).Debugf("failed to update the quota usage for %s %s, error: %v", reference, referenceID, err)
 		}),
 	}
+	// append for override default retry options
+	if len(retryOpts) > 0 {
+		options = append(options, retryOpts...)
+	}
+
 	return retry.Retry(f, options...)
 }
 
@@ -224,7 +380,8 @@ func (c *controller) Refresh(ctx context.Context, reference, referenceID string,
 		return newUsed, err
 	}
 
-	return c.updateUsageWithRetry(ctx, reference, referenceID, refreshResources(calculateUsage, opts.IgnoreLimitation))
+	// update quota usage by db for refresh operation
+	return c.updateUsageWithRetry(ctx, reference, referenceID, refreshResources(calculateUsage, opts.IgnoreLimitation), updateQuotaProviderType(config.GetQuotaUpdateProvider()), opts.RetryOptions...)
 }
 
 func (c *controller) Request(ctx context.Context, reference, referenceID string, resources types.ResourceList, f func() error) error {
@@ -232,7 +389,8 @@ func (c *controller) Request(ctx context.Context, reference, referenceID string,
 		return f()
 	}
 
-	if err := c.updateUsageWithRetry(ctx, reference, referenceID, reserveResources(resources)); err != nil {
+	provider := updateQuotaProviderType(config.GetQuotaUpdateProvider())
+	if err := c.updateUsageWithRetry(ctx, reference, referenceID, reserveResources(resources), provider); err != nil {
 		log.G(ctx).Errorf("reserve resources %s for %s %s failed, error: %v", resources.String(), reference, referenceID, err)
 		return err
 	}
@@ -240,13 +398,36 @@ func (c *controller) Request(ctx context.Context, reference, referenceID string,
 	err := f()
 
 	if err != nil {
-		if er := c.updateUsageWithRetry(ctx, reference, referenceID, rollbackResources(resources)); er != nil {
+		if er := c.updateUsageWithRetry(ctx, reference, referenceID, rollbackResources(resources), provider); er != nil {
 			// ignore this error, the quota usage will be correct when users do operations which will call refresh quota
 			log.G(ctx).Warningf("rollback resources %s for %s %s failed, error: %v", resources.String(), reference, referenceID, er)
 		}
 	}
 
 	return err
+}
+
+// calcQuota calculates the quota and usage in real time.
+func (c *controller) calcQuota(ctx context.Context, reference, referenceID string) (*quota.Quota, error) {
+	// get quota and usage from db
+	q, err := c.quotaMgr.GetByRef(ctx, reference, referenceID)
+	if err != nil {
+		return nil, err
+	}
+	// the usage in the db maybe outdated, calc it in real time
+	driver, err := Driver(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	newUsed, err := driver.CalculateUsage(ctx, referenceID)
+	if err != nil {
+		log.G(ctx).Errorf("failed to calculate quota usage for %s %s, error: %v", reference, referenceID, err)
+		return nil, err
+	}
+
+	q.SetUsed(newUsed)
+	return q, nil
 }
 
 func (c *controller) Update(ctx context.Context, u *quota.Quota) error {
@@ -256,15 +437,19 @@ func (c *controller) Update(ctx context.Context, u *quota.Quota) error {
 			return err
 		}
 
-		if q.Hard != u.Hard {
-			if hard, err := u.GetHard(); err == nil {
-				q.SetHard(hard)
+		if oldHard, err := q.GetHard(); err == nil {
+			if newHard, err := u.GetHard(); err == nil {
+				if !types.Equals(oldHard, newHard) {
+					q.SetHard(newHard)
+				}
 			}
 		}
 
-		if q.Used != u.Used {
-			if used, err := u.GetUsed(); err == nil {
-				q.SetUsed(used)
+		if oldUsed, err := q.GetUsed(); err == nil {
+			if newUsed, err := u.GetUsed(); err == nil {
+				if !types.Equals(oldUsed, newUsed) {
+					q.SetUsed(newUsed)
+				}
 			}
 		}
 
@@ -280,7 +465,7 @@ func (c *controller) Update(ctx context.Context, u *quota.Quota) error {
 }
 
 // Driver returns quota driver for the reference
-func Driver(ctx context.Context, reference string) (driver.Driver, error) {
+func Driver(_ context.Context, reference string) (driver.Driver, error) {
 	d, ok := driver.Get(reference)
 	if !ok {
 		return nil, fmt.Errorf("quota not support for %s", reference)
@@ -304,7 +489,7 @@ func reserveResources(resources types.ResourceList) func(hardLimits, used types.
 		newUsed := types.Add(used, resources)
 
 		if err := quota.IsSafe(hardLimits, used, newUsed, false); err != nil {
-			return nil, errors.DeniedError(err).WithMessage("Quota exceeded when processing the request of %v", err)
+			return nil, errors.DeniedError(err).WithMessagef("Quota exceeded when processing the request of %v", err)
 		}
 
 		return newUsed, nil
@@ -312,7 +497,7 @@ func reserveResources(resources types.ResourceList) func(hardLimits, used types.
 }
 
 func rollbackResources(resources types.ResourceList) func(hardLimits, used types.ResourceList) (types.ResourceList, error) {
-	return func(hardLimits, used types.ResourceList) (types.ResourceList, error) {
+	return func(_, used types.ResourceList) (types.ResourceList, error) {
 		newUsed := types.Subtract(used, resources)
 		// ensure that new used is never negative
 		if negativeUsed := types.IsNegative(newUsed); len(negativeUsed) > 0 {

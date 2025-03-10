@@ -17,11 +17,12 @@ package dao
 import (
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/suite"
 )
 
 type DaoTestSuite struct {
@@ -219,7 +220,7 @@ func (suite *DaoTestSuite) TestList() {
 
 	{
 		// List quotas by sorting
-		quotas, err := suite.dao.List(ctx, &q.Query{Keywords: q.KeyWords{"reference": reference}, Sorting: "-hard.storage"})
+		quotas, err := suite.dao.List(ctx, &q.Query{Keywords: q.KeyWords{"reference": reference}, Sorts: q.ParseSorting("-hard.storage")})
 		suite.Nil(err)
 		suite.Equal(reference, quotas[0].Reference)
 		suite.Equal("1", quotas[0].ReferenceID)

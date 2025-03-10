@@ -50,9 +50,9 @@ func (f *Filter) Validate() error {
 		}
 		if f.Type == FilterTypeResource {
 			rt := value
-			if !(rt == ResourceTypeArtifact || rt == ResourceTypeImage || rt == ResourceTypeChart) {
+			if !(rt == ResourceTypeArtifact || rt == ResourceTypeImage) {
 				return errors.New(nil).WithCode(errors.BadRequestCode).
-					WithMessage("invalid resource filter: %s", value)
+					WithMessagef("invalid resource filter: %s", value)
 			}
 		}
 		if f.Type == FilterTypeName || f.Type == FilterTypeResource {
@@ -81,7 +81,7 @@ func (f *Filter) Validate() error {
 
 	if f.Decoration != "" && f.Decoration != Matches && f.Decoration != Excludes {
 		return errors.New(nil).WithCode(errors.BadRequestCode).
-			WithMessage("invalid filter decoration, :%s", f.Decoration)
+			WithMessagef("invalid filter decoration, :%s", f.Decoration)
 	}
 
 	return nil

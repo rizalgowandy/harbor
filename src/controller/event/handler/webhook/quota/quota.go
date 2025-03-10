@@ -23,9 +23,7 @@ import (
 	"github.com/goharbor/harbor/src/controller/event/handler/util"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/notification"
-	"github.com/goharbor/harbor/src/pkg/notifier/model"
 	notifyModel "github.com/goharbor/harbor/src/pkg/notifier/model"
 	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 )
@@ -49,7 +47,7 @@ func (qp *Handler) Handle(ctx context.Context, value interface{}) error {
 		return fmt.Errorf("nil quota event")
 	}
 
-	prj, err := project.Ctl.GetByName(orm.Context(), quotaEvent.Project.Name, project.Metadata(true))
+	prj, err := project.Ctl.GetByName(ctx, quotaEvent.Project.Name, project.Metadata(true))
 	if err != nil {
 		log.Errorf("failed to get project:%s, error: %v", quotaEvent.Project.Name, err)
 		return err
@@ -70,7 +68,7 @@ func (qp *Handler) Handle(ctx context.Context, value interface{}) error {
 		return err
 	}
 
-	err = util.SendHookWithPolicies(policies, payload, quotaEvent.EventType)
+	err = util.SendHookWithPolicies(ctx, policies, payload, quotaEvent.EventType)
 	if err != nil {
 		return err
 	}
@@ -82,7 +80,7 @@ func (qp *Handler) IsStateful() bool {
 	return false
 }
 
-func constructQuotaPayload(event *event.QuotaEvent) (*model.Payload, error) {
+func constructQuotaPayload(event *event.QuotaEvent) (*notifyModel.Payload, error) {
 	repoName := event.RepoName
 	if repoName == "" {
 		return nil, fmt.Errorf("invalid %s event with empty repo name", event.EventType)
@@ -109,6 +107,7 @@ func constructQuotaPayload(event *event.QuotaEvent) (*model.Payload, error) {
 			},
 			Custom: quotaCustom,
 		},
+		Operator: event.Operator,
 	}
 
 	if event.Resource != nil {

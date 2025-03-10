@@ -19,14 +19,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/goharbor/harbor/src/lib/q"
-	libredis "github.com/goharbor/harbor/src/lib/redis"
-
 	"github.com/docker/distribution"
 	"github.com/go-redis/redis/v8"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/lib/q"
+	libredis "github.com/goharbor/harbor/src/lib/redis"
 	"github.com/goharbor/harbor/src/pkg/blob"
 	blob_models "github.com/goharbor/harbor/src/pkg/blob/models"
 )
@@ -248,7 +248,7 @@ func (c *controller) Get(ctx context.Context, digest string, options ...Option) 
 	if err != nil {
 		return nil, err
 	} else if len(blobs) == 0 {
-		return nil, errors.NotFoundError(nil).WithMessage("blob %s not found", digest)
+		return nil, errors.NotFoundError(nil).WithMessagef("blob %s not found", digest)
 	}
 
 	return blobs[0], nil
@@ -295,7 +295,7 @@ func (c *controller) Sync(ctx context.Context, references []distribution.Descrip
 	}
 
 	if len(updating) > 0 {
-		orm.WithTransaction(func(ctx context.Context) error {
+		err := orm.WithTransaction(func(ctx context.Context) error {
 			for _, blob := range updating {
 				if err := c.Update(ctx, blob); err != nil {
 					log.G(ctx).Warningf("Failed to update blob %s, error: %v", blob.Digest, err)
@@ -305,6 +305,9 @@ func (c *controller) Sync(ctx context.Context, references []distribution.Descrip
 
 			return nil
 		})(orm.SetTransactionOpNameToContext(ctx, "tx-sync-blob"))
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(missing) > 0 {
@@ -320,7 +323,12 @@ func (c *controller) Sync(ctx context.Context, references []distribution.Descrip
 
 func (c *controller) SetAcceptedBlobSize(ctx context.Context, sessionID string, size int64) error {
 	key := blobSizeKey(sessionID)
-	err := libredis.Instance().Set(ctx, key, size, c.blobSizeExpiration).Err()
+	rc, err := libredis.GetRegistryClient()
+	if err != nil {
+		return err
+	}
+
+	err = rc.Set(ctx, key, size, c.blobSizeExpiration).Err()
 	if err != nil {
 		log.Errorf("failed to set accepted blob size for session %s in redis, error: %v", sessionID, err)
 		return err
@@ -331,7 +339,12 @@ func (c *controller) SetAcceptedBlobSize(ctx context.Context, sessionID string, 
 
 func (c *controller) GetAcceptedBlobSize(ctx context.Context, sessionID string) (int64, error) {
 	key := blobSizeKey(sessionID)
-	size, err := libredis.Instance().Get(ctx, key).Int64()
+	rc, err := libredis.GetRegistryClient()
+	if err != nil {
+		return 0, err
+	}
+
+	size, err := rc.Get(ctx, key).Int64()
 	if err != nil {
 		if err == redis.Nil {
 			return 0, nil
@@ -350,7 +363,7 @@ func (c *controller) Touch(ctx context.Context, blob *blob.Blob) error {
 		return err
 	}
 	if count == 0 {
-		return errors.New(nil).WithMessage(fmt.Sprintf("no blob item is updated to StatusNone, id:%d, digest:%s", blob.ID, blob.Digest)).WithCode(errors.NotFoundCode)
+		return errors.New(nil).WithMessagef("no blob item is updated to StatusNone, id:%d, digest:%s", blob.ID, blob.Digest).WithCode(errors.NotFoundCode)
 	}
 	return nil
 }
@@ -362,7 +375,7 @@ func (c *controller) Fail(ctx context.Context, blob *blob.Blob) error {
 		return err
 	}
 	if count == 0 {
-		return errors.New(nil).WithMessage(fmt.Sprintf("no blob item is updated to StatusDeleteFailed, id:%d, digest:%s", blob.ID, blob.Digest)).WithCode(errors.NotFoundCode)
+		return errors.New(nil).WithMessagef("no blob item is updated to StatusDeleteFailed, id:%d, digest:%s", blob.ID, blob.Digest).WithCode(errors.NotFoundCode)
 	}
 	return nil
 }

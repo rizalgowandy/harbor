@@ -18,7 +18,8 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/astaxie/beego"
+	"github.com/beego/beego/v2/server/web"
+
 	"github.com/goharbor/harbor/src/pkg/distribution"
 	"github.com/goharbor/harbor/src/server/middleware"
 	"github.com/goharbor/harbor/src/server/middleware/artifactinfo"
@@ -34,11 +35,13 @@ import (
 	"github.com/goharbor/harbor/src/server/middleware/session"
 	"github.com/goharbor/harbor/src/server/middleware/trace"
 	"github.com/goharbor/harbor/src/server/middleware/transaction"
+	"github.com/goharbor/harbor/src/server/middleware/url"
 )
 
 var (
-	match         = regexp.MustCompile
-	numericRegexp = match(`[0-9]+`)
+	match              = regexp.MustCompile
+	numericRegexp      = match(`[0-9]+`)
+	serviceTokenRegexp = match(`^/service/token`)
 
 	// The ping endpoint will be blocked when DB conns reach the max open conns of the sql.DB
 	// which will make ping request timeout, so skip the middlewares which will require DB conn.
@@ -52,6 +55,7 @@ var (
 	dbTxSkippers = []middleware.Skipper{
 		middleware.MethodAndPathSkipper(http.MethodPatch, distribution.BlobUploadURLRegexp),
 		middleware.MethodAndPathSkipper(http.MethodPut, distribution.BlobUploadURLRegexp),
+		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/token")),
 		func(r *http.Request) bool { // skip tx for GET, HEAD and Options requests
 			m := r.Method
 			return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
@@ -68,22 +72,24 @@ var (
 		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/adminjob/"+numericRegexp.String())),
 		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/replication/"+numericRegexp.String())),
 		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/replication/task/"+numericRegexp.String())),
-		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/webhook/"+numericRegexp.String())),
 		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/retention/task/"+numericRegexp.String())),
 		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/schedules/"+numericRegexp.String())),
-		middleware.MethodAndPathSkipper(http.MethodPost, match("^/service/notifications/jobs/webhook/"+numericRegexp.String())),
+		// Harbor doesn't handle the POST request to /service/token. beego framework return 405 for the POST request
+		// some client, such as containerd, may send the POST request to /service/token and depends on 405/404/401/400 return code to determine continue or not
+		// the read only middleware returns 403 before the beego framework, so skip this request to make the client continue
+		middleware.MethodAndPathSkipper(http.MethodPost, serviceTokenRegexp),
 		pingSkipper,
 	}
 )
 
 // MiddleWares returns global middlewares
-func MiddleWares() []beego.MiddleWare {
-	return []beego.MiddleWare{
+func MiddleWares() []web.MiddleWare {
+	return []web.MiddleWare{
+		url.Middleware(),
 		mergeslash.Middleware(),
 		trace.Middleware(),
 		metric.Middleware(),
 		requestid.Middleware(),
-		log.Middleware(),
 		session.Middleware(),
 		csrf.Middleware(),
 		orm.Middleware(pingSkipper),
@@ -91,6 +97,7 @@ func MiddleWares() []beego.MiddleWare {
 		transaction.Middleware(dbTxSkippers...),
 		artifactinfo.Middleware(),
 		security.Middleware(pingSkipper),
+		log.Middleware(), // log middleware should be after the security middleware so that the user info can be logged
 		security.UnauthorizedMiddleware(),
 		readonly.Middleware(readonlySkippers...),
 	}

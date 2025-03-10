@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package utils
 
 import (
@@ -58,7 +72,7 @@ func (p *passportsPool) Revoke() bool {
 type LimitedConcurrentRunner interface {
 	// AddTask adds a task to run
 	AddTask(task func() error)
-	// Wait waits all the tasks to be finished, returns error if the any of the tasks gets error
+	// Wait waits all the tasks to be finished, returns error if any of the tasks gets error
 	Wait() (err error)
 	// Cancel cancels all tasks, tasks that already started will continue to run
 	Cancel(err error)
@@ -92,7 +106,7 @@ func (r *limitedConcurrentRunner) AddTask(task func() error) {
 			r.wg.Done()
 		}()
 
-		// Return false means no passport acquired, and no valid passport will be dispatched any more.
+		// Return false means no passport acquired, and no valid passport will be dispatched anymore.
 		// For example, some crucial errors happened and all tasks should be cancelled.
 		if ok := r.passportsPool.Apply(); !ok {
 			return

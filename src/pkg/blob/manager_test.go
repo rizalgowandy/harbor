@@ -16,14 +16,15 @@ package blob
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib/q"
-	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/suite"
 	"testing"
 	"time"
 
 	"github.com/docker/distribution/manifest/schema2"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/blob/models"
+	htesting "github.com/goharbor/harbor/src/testing"
 )
 
 type ManagerTestSuite struct {
@@ -129,7 +130,7 @@ func (suite *ManagerTestSuite) TestCleanupAssociationsForProject() {
 		artifact1 := suite.DigestString()
 		artifact2 := suite.DigestString()
 
-		sql := `INSERT INTO artifact ("type", media_type, manifest_media_type, digest, project_id, repository_id, repository_name) VALUES ('image', 'media_type', 'manifest_media_type', ?, ?, ?, 'library/hello-world')`
+		sql := `INSERT INTO artifact ("type", media_type, manifest_media_type, digest, project_id, repository_id, repository_name, artifact_type) VALUES ('image', 'media_type', 'manifest_media_type', ?, ?, ?, 'library/hello-world', 'artifact_type')`
 		suite.ExecSQL(sql, artifact1, projectID, 10)
 		suite.ExecSQL(sql, artifact2, projectID, 10)
 
@@ -199,7 +200,7 @@ func (suite *ManagerTestSuite) TestFindBlobsShouldUnassociatedWithProject() {
 		artifact1 := suite.DigestString()
 		artifact2 := suite.DigestString()
 
-		sql := `INSERT INTO artifact ("type", media_type, manifest_media_type, digest, project_id, repository_id, repository_name) VALUES ('image', 'media_type', 'manifest_media_type', ?, ?, ?, 'library/hello-world')`
+		sql := `INSERT INTO artifact ("type", media_type, manifest_media_type, digest, project_id, repository_id, repository_name, artifact_type) VALUES ('image', 'media_type', 'manifest_media_type', ?, ?, ?, 'library/hello-world', 'artifact_type')`
 		suite.ExecSQL(sql, artifact1, projectID, 11)
 		suite.ExecSQL(sql, artifact2, projectID, 11)
 

@@ -16,18 +16,19 @@ package quota
 
 import (
 	"fmt"
-	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/notification"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type PutBlobUploadMiddlewareTestSuite struct {
@@ -139,7 +140,7 @@ func (suite *PutBlobUploadMiddlewareTestSuite) TestResourcesExceeded() {
 		var errs quota.Errors
 		errs = errs.Add(quota.NewResourceOverflowError(types.ResourceStorage, 100, 100, 110))
 
-		err := errors.DeniedError(errs).WithMessage("Quota exceeded when processing the request of %v", errs)
+		err := errors.DeniedError(errs).WithMessagef("Quota exceeded when processing the request of %v", errs)
 		mock.OnAnything(suite.quotaController, "Request").Return(err).Once()
 
 		req := suite.makeRequest(100)

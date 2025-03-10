@@ -14,15 +14,13 @@
 
 package flow
 
-import (
-	"github.com/goharbor/harbor/src/pkg/reg/adapter"
-)
+import "github.com/goharbor/harbor/src/pkg/reg/adapter"
 
 // define a new interface to combine the two interfaces of adapter for mockery to generate the mocks
+
+// nolint:deadcode
+// for make gen_mocks use
 type registryAdapter interface {
 	adapter.Adapter
 	adapter.ArtifactRegistry
 }
-
-//go:generate mockery --dir . --name registryAdapter --output . --outpkg flow --filename mock_adapter_test.go --structname mockAdapter
-//go:generate mockery --dir ../../../pkg/reg/adapter --name Factory --output . --outpkg flow --filename mock_adapter_factory_test.go --structname mockFactory

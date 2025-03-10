@@ -21,6 +21,9 @@ import (
 	"time"
 
 	"github.com/gocraft/work"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/goharbor/harbor/src/jobservice/env"
 	"github.com/goharbor/harbor/src/jobservice/errs"
 	"github.com/goharbor/harbor/src/jobservice/job"
@@ -30,8 +33,6 @@ import (
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/metric"
 	tracelib "github.com/goharbor/harbor/src/lib/trace"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 )
 
 const (
@@ -94,11 +95,11 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 				<-time.After(time.Duration(b) * time.Millisecond)
 				span.AddEvent("retrying to get job stat")
 				continue
-			} else {
-				// Exit and never try.
-				// Directly return without retry again as we have no way to restore the stats again.
-				j.Fails = 10000000000 // never retry
 			}
+			// else
+			// Exit and never try.
+			// Directly return without retry again as we have no way to restore the stats again.
+			j.Fails = 10000000000 // never retry
 		}
 
 		// Log error and exit
@@ -160,7 +161,7 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Log the stack
-			buf := make([]byte, 1<<10)
+			buf := make([]byte, 1<<20)
 			size := runtime.Stack(buf, false)
 			err = errors.Errorf("runtime error: %s; stack: %s", r, buf[0:size])
 			logger.Errorf("Run job %s:%s error: %s", j.Name, j.ID, err)
@@ -194,7 +195,6 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 		}
 
 		logger.Infof("Retrying job %s:%s, revision: %d", j.Name, j.ID, tracker.Job().Info.Revision)
-		break
 	case job.SuccessStatus:
 		// do nothing
 		return nil

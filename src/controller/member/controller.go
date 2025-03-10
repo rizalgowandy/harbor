@@ -1,16 +1,16 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package member
 
@@ -19,9 +19,11 @@ import (
 	"fmt"
 
 	"github.com/goharbor/harbor/src/common"
+	commonmodels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/core/auth"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/member"
 	"github.com/goharbor/harbor/src/pkg/member/models"
 	"github.com/goharbor/harbor/src/pkg/project"
@@ -31,18 +33,20 @@ import (
 
 // Controller defines the operation related to project member
 type Controller interface {
-	// Get get the project member with ID
+	// Get gets the project member with ID
 	Get(ctx context.Context, projectNameOrID interface{}, memberID int) (*models.Member, error)
 	// Create add project member to project
 	Create(ctx context.Context, projectNameOrID interface{}, req Request) (int, error)
 	// Delete member from project
 	Delete(ctx context.Context, projectNameOrID interface{}, memberID int) error
-	// List list all project members with condition
+	// List lists all project members with condition
 	List(ctx context.Context, projectNameOrID interface{}, entityName string, query *q.Query) ([]*models.Member, error)
 	// UpdateRole update the project member role
 	UpdateRole(ctx context.Context, projectNameOrID interface{}, memberID int, role int) error
 	// Count get the total amount of project members
 	Count(ctx context.Context, projectNameOrID interface{}, query *q.Query) (int, error)
+	// IsProjectAdmin judges if the user is a project admin of any project
+	IsProjectAdmin(ctx context.Context, member commonmodels.User) (bool, error)
 }
 
 // Request - Project Member Request
@@ -74,14 +78,15 @@ var ErrDuplicateProjectMember = errors.ConflictError(nil).WithMessage("The proje
 var ErrInvalidRole = errors.BadRequestError(nil).WithMessage("Failed to update project member, role is not in 1,2,3")
 
 type controller struct {
-	userManager user.Manager
-	mgr         member.Manager
-	projectMgr  project.Manager
+	userManager  user.Manager
+	mgr          member.Manager
+	projectMgr   project.Manager
+	groupManager usergroup.Manager
 }
 
 // NewController ...
 func NewController() Controller {
-	return &controller{mgr: member.Mgr, projectMgr: project.Mgr, userManager: user.New()}
+	return &controller{mgr: member.Mgr, projectMgr: pkg.ProjectMgr, userManager: user.New(), groupManager: usergroup.Mgr}
 }
 
 func (c *controller) Count(ctx context.Context, projectNameOrID interface{}, query *q.Query) (int, error) {
@@ -128,9 +133,23 @@ func (c *controller) Create(ctx context.Context, projectNameOrID interface{}, re
 	member.EntityType = common.GroupMember
 
 	if req.MemberUser.UserID > 0 {
+		user, err := c.userManager.Get(ctx, req.MemberUser.UserID)
+		if err != nil {
+			return 0, errors.BadRequestError(nil).WithMessagef("Failed to get user %d: %v", req.MemberUser.UserID, err)
+		}
+		if user == nil {
+			return 0, errors.BadRequestError(nil).WithMessagef("User %d not found", req.MemberUser.UserID)
+		}
 		member.EntityID = req.MemberUser.UserID
 		member.EntityType = common.UserMember
 	} else if req.MemberGroup.ID > 0 {
+		g, err := c.groupManager.Get(ctx, req.MemberGroup.ID)
+		if err != nil {
+			return 0, errors.BadRequestError(nil).WithMessagef("Failed to get group %d: %v", req.MemberGroup.ID, err)
+		}
+		if g == nil {
+			return 0, errors.BadRequestError(nil).WithMessagef("Group %d not found", req.MemberGroup.ID)
+		}
 		member.EntityID = req.MemberGroup.ID
 	} else if len(req.MemberUser.Username) > 0 {
 		// If username is provided, search userid by username
@@ -167,7 +186,6 @@ func (c *controller) Create(ctx context.Context, projectNameOrID interface{}, re
 			}
 			member.EntityID = groupID
 		}
-
 	} else if len(req.MemberGroup.GroupName) > 0 {
 		// all group type can be added to project member by name
 		ugs, err := usergroup.Mgr.List(ctx, q.New(q.KeyWords{"GroupName": req.MemberGroup.GroupName, "GroupType": req.MemberGroup.GroupType}))
@@ -183,7 +201,6 @@ func (c *controller) Create(ctx context.Context, projectNameOrID interface{}, re
 		} else {
 			member.EntityID = ugs[0].ID
 		}
-
 	}
 	if member.EntityID <= 0 {
 		return 0, fmt.Errorf("can not get valid member entity, request: %+v", req)
@@ -243,4 +260,13 @@ func (c *controller) Delete(ctx context.Context, projectNameOrID interface{}, me
 		return err
 	}
 	return c.mgr.Delete(ctx, p.ProjectID, memberID)
+}
+
+func (c *controller) IsProjectAdmin(ctx context.Context, member commonmodels.User) (bool, error) {
+	members, err := c.projectMgr.ListAdminRolesOfUser(ctx, member)
+	if err != nil {
+		return false, err
+	}
+
+	return len(members) > 0, nil
 }

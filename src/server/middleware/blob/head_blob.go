@@ -1,7 +1,23 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package blob
 
 import (
-	"fmt"
+	"net/http"
+	"time"
+
 	"github.com/goharbor/harbor/src/controller/blob"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/config"
@@ -11,8 +27,6 @@ import (
 	blob_models "github.com/goharbor/harbor/src/pkg/blob/models"
 	"github.com/goharbor/harbor/src/server/middleware"
 	"github.com/goharbor/harbor/src/server/middleware/requestid"
-	"net/http"
-	"time"
 )
 
 // HeadBlobMiddleware intercept the head blob request
@@ -44,7 +58,7 @@ func handleHead(req *http.Request) error {
 	case blob_models.StatusNone, blob_models.StatusDelete:
 		if err := blob.Ctl.Touch(req.Context(), bb); err != nil {
 			log.Errorf("failed to update blob: %s status to StatusNone, error:%v", blobInfo.Digest, err)
-			return errors.Wrapf(err, fmt.Sprintf("the request id is: %s", req.Header.Get(requestid.HeaderXRequestID)))
+			return errors.Wrapf(err, "the request id is: %s", req.Header.Get(requestid.HeaderXRequestID))
 		}
 	case blob_models.StatusDeleting:
 		now := time.Now().UTC()
@@ -52,14 +66,14 @@ func handleHead(req *http.Request) error {
 		if now.Sub(bb.UpdateTime) > time.Duration(config.GetGCTimeWindow())*time.Hour {
 			if err := blob.Ctl.Fail(req.Context(), bb); err != nil {
 				log.Errorf("failed to update blob: %s status to StatusDeleteFailed, error:%v", blobInfo.Digest, err)
-				return errors.Wrapf(err, fmt.Sprintf("the request id is: %s", req.Header.Get(requestid.HeaderXRequestID)))
+				return errors.Wrapf(err, "the request id is: %s", req.Header.Get(requestid.HeaderXRequestID))
 			}
 		}
-		return errors.New(nil).WithMessage(fmt.Sprintf("the asking blob is in GC, mark it as non existing, request id: %s", req.Header.Get(requestid.HeaderXRequestID))).WithCode(errors.NotFoundCode)
+		return errors.New(nil).WithMessagef("the asking blob is in GC, mark it as non existing, request id: %s", req.Header.Get(requestid.HeaderXRequestID)).WithCode(errors.NotFoundCode)
 	case blob_models.StatusDeleteFailed:
-		return errors.New(nil).WithMessage(fmt.Sprintf("the asking blob is delete failed, mark it as non existing, request id: %s", req.Header.Get(requestid.HeaderXRequestID))).WithCode(errors.NotFoundCode)
+		return errors.New(nil).WithMessagef("the asking blob is delete failed, mark it as non existing, request id: %s", req.Header.Get(requestid.HeaderXRequestID)).WithCode(errors.NotFoundCode)
 	default:
-		return errors.New(nil).WithMessage(fmt.Sprintf("wrong blob status, %s", bb.Status))
+		return errors.New(nil).WithMessagef("wrong blob status, %s", bb.Status)
 	}
 	return nil
 }

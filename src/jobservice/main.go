@@ -29,13 +29,22 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/runtime"
 	cfgLib "github.com/goharbor/harbor/src/lib/config"
 	tracelib "github.com/goharbor/harbor/src/lib/trace"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/base"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/cosign"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/notation"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/nydus"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/subject"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	_ "github.com/goharbor/harbor/src/pkg/config/rest"
+	_ "github.com/goharbor/harbor/src/pkg/scan/sbom"
+	_ "github.com/goharbor/harbor/src/pkg/scan/vulnerability"
 )
 
 func main() {
 	cfgLib.DefaultCfgManager = common.RestCfgManager
-	cfgLib.DefaultMgr().Load(context.Background())
+	if err := cfgLib.DefaultMgr().Load(context.Background()); err != nil {
+		panic(fmt.Sprintf("failed to load configuration, error: %v", err))
+	}
 
 	// Get parameters
 	configPath := flag.String("c", "", "Specify the yaml config file path")

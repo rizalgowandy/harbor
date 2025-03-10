@@ -16,7 +16,6 @@
 package utils
 
 import (
-	"os"
 	"testing"
 
 	"github.com/gocraft/work"
@@ -51,10 +50,9 @@ func (suite *UtilsTestSuite) TestIsEmptyStr() {
 
 // TestReadEnv tests ReadEnv
 func (suite *UtilsTestSuite) TestReadEnv() {
-	os.Setenv("TEST_EXIST_ENV_VAR", "test")
+	suite.T().Setenv("TEST_EXIST_ENV_VAR", "test")
 	assert.Equal(suite.T(), "test", ReadEnv("TEST_EXIST_ENV_VAR"), "env var TEST_EXIST_ENV_VAR should return test value")
 	assert.Equal(suite.T(), "", ReadEnv("TEST_NOT_EXIST_ENV_VAR"), "env var TEST_NOT_EXIST_ENV_VAR should return empty value")
-	os.Unsetenv("TEST_EXIST_ENV_VAR")
 }
 
 // TestFileExists tests FileExists
@@ -71,7 +69,7 @@ func (suite *UtilsTestSuite) TestDirExists() {
 	assert.False(suite.T(), DirExists(""), "empty string should not exist")
 }
 
-// TestIsVaildPort tests IsVaildPort
+// TestIsValidPort tests IsVaildPort
 func (suite *UtilsTestSuite) TestIsValidPort() {
 	assert.True(suite.T(), IsValidPort(80), "80 should be a valid port")
 	assert.True(suite.T(), IsValidPort(65535), "65535 should be a valid port")

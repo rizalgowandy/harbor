@@ -212,13 +212,17 @@ Clean All Local Images
 Docker Login Fail
     [Arguments]  ${ip}  ${user}  ${pwd}
     Log To Console  \nRunning docker login ${ip} ...
+    ${prev_lvl}  Set Log Level  NONE
     ${output}=  Command Should be Failed  docker login -u ${user} -p ${pwd} ${ip}
+    ${prev_lvl}  Set Log Level  ${prev_lvl}
     Should Contain  ${output}  unauthorized
     Should Not Contain  ${output}  500 Internal Server Error
 
 Docker Login
     [Arguments]  ${server}  ${username}  ${password}
+    ${prev_lvl}  Set Log Level  NONE
     Wait Unitl Command Success  docker login -u ${username} -p ${password} ${server}
+    ${prev_lvl}  Set Log Level  ${prev_lvl}
 
 Docker Logout
     [Arguments]  ${server}
@@ -257,11 +261,38 @@ Docker Image Can Not Be Pulled
     Log To Console  Cannot Pull Image From Docker - Pull Log: ${out[1]}
     Should Be Equal As Strings  '${out[0]}'  'PASS'
 
+Docker Image Can Not Be Pulled With Credential
+    [Arguments]  ${server}  ${username}  ${password}  ${image}
+    FOR  ${idx}  IN RANGE  0  30
+        ${out}=  Run Keyword And Ignore Error  Docker Login  ${server}  ${username}  ${password}
+        Log To Console  Return value is ${out}
+        ${out}=  Run Keyword And Ignore Error  Command Should be Failed  docker pull ${image}
+        Exit For Loop If  '${out[0]}'=='PASS'
+        Log To Console  Docker pull return value is ${out}
+        Sleep  3
+    END
+    Log To Console  Cannot Pull Image From Docker - Pull Log: ${out[1]}
+    Should Be Equal As Strings  '${out[0]}'  'PASS'
+
 Docker Image Can Be Pulled
     [Arguments]  ${image}  ${period}=60  ${times}=2
     FOR  ${n}  IN RANGE  1  ${times}
         Sleep  ${period}
         ${out}=  Run Keyword And Ignore Error  Docker Login  ""  ${DOCKER_USER}  ${DOCKER_PWD}
+        Log To Console  Return value is ${out}
+        ${out}=  Run Keyword And Ignore Error  Docker Pull  ${image}
+        Log To Console  Return value is ${out[0]}
+        Exit For Loop If  '${out[0]}'=='PASS'
+        Sleep  5
+    END
+    Run Keyword If  '${out[0]}'=='FAIL'  Capture Page Screenshot
+    Should Be Equal As Strings  '${out[0]}'  'PASS'
+
+Docker Image Can Be Pulled With Credential
+    [Arguments]  ${server}  ${username}  ${password}  ${image}  ${period}=60  ${times}=2
+    FOR  ${n}  IN RANGE  1  ${times}
+        Sleep  ${period}
+        ${out}=  Run Keyword And Ignore Error  Docker Login  ${server}  ${username}  ${password}
         Log To Console  Return value is ${out}
         ${out}=  Run Keyword And Ignore Error  Docker Pull  ${image}
         Log To Console  Return value is ${out[0]}

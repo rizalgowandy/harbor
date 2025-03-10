@@ -15,6 +15,7 @@
 package redis
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/url"
 	"sort"
@@ -23,12 +24,19 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
 	"github.com/goharbor/harbor/src/lib/errors"
+)
+
+var (
+	// defaultDBIndex defines the default redis db index
+	defaultDBIndex = 0
 )
 
 // ParseSentinelURL parses sentinel url to redis FailoverOptions.
 // It's a modified version of go-redis ParseURL(https://github.com/go-redis/redis/blob/997118894af9d4244d4a471f2b317eead9c9ca62/options.go#L222) because official version does
 // not support parse sentinel mode.
+// redis+sentinel://user:pass@redis_sentinel1:port1,redis_sentinel2:port2/monitor_name/db?idle_timeout_seconds=100
 func ParseSentinelURL(redisURL string) (*redis.FailoverOptions, error) {
 	u, err := url.Parse(redisURL)
 	if err != nil {
@@ -44,13 +52,25 @@ func ParseSentinelURL(redisURL string) (*redis.FailoverOptions, error) {
 		return r == '/'
 	})
 	// expect path length is 2, example: [mymaster 1]
-	if len(f) != 2 {
+	// but if the db is default(0) which can be ignored, so when the path length is 1, then set db to 0
+	switch len(f) {
+	case 1:
+		o.MasterName = f[0]
+		o.DB = defaultDBIndex
+	case 2:
+		o.MasterName = f[0]
+		if o.DB, err = strconv.Atoi(f[1]); err != nil {
+			return nil, errors.Errorf("redis: invalid database number: %q", f[1])
+		}
+	default:
 		return nil, errors.Errorf("redis: invalid redis URL path: %s", u.Path)
 	}
 
-	o.MasterName = f[0]
-	if o.DB, err = strconv.Atoi(f[1]); err != nil {
-		return nil, errors.Errorf("redis: invalid database number: %q", f[1])
+	// set tls config for redis+sentinel client use tls connections
+	if u.Scheme == "rediss+sentinel" {
+		o.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 
 	return setupConnParams(u, o)

@@ -29,6 +29,7 @@ import (
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 	"github.com/goharbor/harbor/src/server/middleware"
+	"github.com/goharbor/harbor/src/server/middleware/security"
 )
 
 var (
@@ -167,7 +168,7 @@ func RequestMiddleware(config RequestConfig, skippers ...middleware.Skipper) fun
 				}
 			}
 
-			res.Reset()
+			_ = res.Reset()
 
 			var errs quota.Errors
 			if errors.As(err, &errs) {
@@ -176,7 +177,6 @@ func RequestMiddleware(config RequestConfig, skippers ...middleware.Skipper) fun
 				lib_http.SendError(res, err)
 			}
 		}
-
 	}, skippers...)
 }
 
@@ -191,7 +191,7 @@ type RefreshConfig struct {
 
 // RefreshMiddleware middleware which refresh the quota usage after the response success
 func RefreshMiddleware(config RefreshConfig, skipers ...middleware.Skipper) func(http.Handler) http.Handler {
-	return middleware.AfterResponse(func(w http.ResponseWriter, r *http.Request, statusCode int) error {
+	return middleware.AfterResponse(func(_ http.ResponseWriter, r *http.Request, statusCode int) error {
 		// skip to refresh quota usage when response is not success
 		if !isSuccess(statusCode) {
 			return nil
@@ -217,6 +217,15 @@ func RefreshMiddleware(config RefreshConfig, skipers ...middleware.Skipper) func
 
 		if !enabled {
 			logger.Debugf("quota is deactivated for %s %s, so return directly", reference, referenceID)
+			return nil
+		}
+
+		// if the request is from jobservice and is retention job, ignore refresh as tag retention
+		// delete artifact, and if the number of artifact is large that will
+		// cause huge db CPU resource for refresh quota, so ignore here and let
+		// task call the refresh on the own initiative.
+		if security.FromJobservice(r) && security.FromJobRetention(r) {
+			logger.Debugf("quota is skipped for %s %s, because this request is from jobservice retention job", reference, referenceID)
 			return nil
 		}
 

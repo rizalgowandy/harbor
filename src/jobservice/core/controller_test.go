@@ -16,15 +16,16 @@ package core
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/jobservice/common/query"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/sample"
 	"github.com/goharbor/harbor/src/jobservice/worker"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 // ControllerTestSuite tests functions of core controller
@@ -167,7 +168,7 @@ func (suite *ControllerTestSuite) TestInvalidChecks() {
 	assert.NotNil(suite.T(), err, "invalid job name: error expected but got nil")
 }
 
-// TestScheduledJobs ...
+// TestGetScheduledJobs ...
 func (suite *ControllerTestSuite) TestGetScheduledJobs() {
 	extras := make(query.ExtraParameters)
 	extras.Set(query.ExtraParamKeyKind, job.KindScheduled)

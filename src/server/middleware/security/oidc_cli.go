@@ -26,6 +26,7 @@ import (
 	"github.com/goharbor/harbor/src/common/security/local"
 	"github.com/goharbor/harbor/src/controller/user"
 	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/oidc"
 )
@@ -57,29 +58,35 @@ func (o *oidcCli) Generate(req *http.Request) security.Context {
 	if !o.valid(req) {
 		return nil
 	}
-	info, err := oidc.VerifySecret(ctx, username, secret)
-	if err != nil {
-		logger.Errorf("failed to verify secret, username: %s, error: %v", username, err)
+
+	if strings.HasPrefix(username, config.RobotPrefix(ctx)) {
 		return nil
 	}
+
 	u, err := uctl.GetByName(ctx, username)
 	if err != nil {
 		logger.Errorf("failed to get user model, username: %s, error: %v", username, err)
 		return nil
 	}
+
+	info, err := oidc.VerifySecret(ctx, username, secret)
+	if err != nil {
+		if u.UserID != 1 { // skip the admin user
+			logger.Errorf("failed to verify secret, username: %s, error: %v", username, err)
+		}
+		return nil
+	}
+
 	oidc.InjectGroupsToUser(info, u)
 	logger.Debugf("an OIDC CLI security context generated for request %s %s", req.Method, req.URL.Path)
 	return local.NewSecurityContext(u)
 }
 
 func (o *oidcCli) valid(req *http.Request) bool {
-
 	path := strings.TrimSuffix(req.URL.Path, "/")
 
 	if path == "/service/token" ||
-		strings.HasPrefix(path, "/v2") ||
-		strings.HasPrefix(path, "/chartrepo") ||
-		strings.HasPrefix(path, "/api/chartrepo") {
+		strings.HasPrefix(path, "/v2") {
 		// The request was sent by CLI to upload/download artifacts
 		return true
 	}

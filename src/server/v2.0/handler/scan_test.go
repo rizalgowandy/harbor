@@ -16,7 +16,10 @@ package handler
 
 import (
 	"fmt"
+	"github.com/goharbor/harbor/src/server/v2.0/models"
 	"testing"
+
+	"github.com/stretchr/testify/suite"
 
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/project"
@@ -27,7 +30,6 @@ import (
 	scantesting "github.com/goharbor/harbor/src/testing/controller/scan"
 	"github.com/goharbor/harbor/src/testing/mock"
 	htesting "github.com/goharbor/harbor/src/testing/server/v2.0/handler"
-	"github.com/stretchr/testify/suite"
 )
 
 type ScanTestSuite struct {
@@ -66,12 +68,12 @@ func (suite *ScanTestSuite) TestStopScan() {
 	suite.Security.On("Can", mock.Anything, mock.Anything, mock.Anything).Return(true).Times(times)
 
 	url := "/projects/library/repositories/nginx/artifacts/sha256:e4f0474a75c510f40b37b6b7dc2516241ffa8bde5a442bde3d372c9519c84d90/scan/stop"
-
+	body := models.ScanType{ScanType: "sbom"}
 	{
 		// failed to get artifact by reference
 		mock.OnAnything(suite.artifactCtl, "GetByReference").Return(&artifact.Artifact{}, fmt.Errorf("failed to get artifact by reference")).Once()
 
-		res, err := suite.Post(url, nil)
+		res, err := suite.PostJSON(url, body)
 		suite.NoError(err)
 		suite.Equal(500, res.StatusCode)
 	}
@@ -81,7 +83,7 @@ func (suite *ScanTestSuite) TestStopScan() {
 		mock.OnAnything(suite.artifactCtl, "GetByReference").Return(nil, nil).Once()
 		mock.OnAnything(suite.scanCtl, "Stop").Return(fmt.Errorf("nil artifact to stop scan")).Once()
 
-		res, err := suite.Post(url, nil)
+		res, err := suite.PostJSON(url, body)
 		suite.NoError(err)
 		suite.Equal(500, res.StatusCode)
 	}
@@ -91,7 +93,7 @@ func (suite *ScanTestSuite) TestStopScan() {
 		mock.OnAnything(suite.artifactCtl, "GetByReference").Return(&artifact.Artifact{}, nil).Once()
 		mock.OnAnything(suite.scanCtl, "Stop").Return(nil).Once()
 
-		res, err := suite.Post(url, nil)
+		res, err := suite.PostJSON(url, body)
 		suite.NoError(err)
 		suite.Equal(202, res.StatusCode)
 	}

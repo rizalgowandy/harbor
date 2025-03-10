@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handler
 
 import (
@@ -5,14 +19,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/pkg/task"
-
 	"github.com/go-openapi/strfmt"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/policy"
 	instanceModel "github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider"
+	"github.com/goharbor/harbor/src/pkg/task"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
-	"github.com/stretchr/testify/assert"
 )
 
 func Test_convertProvidersToFrontend(t *testing.T) {
@@ -25,7 +39,7 @@ func Test_convertProvidersToFrontend(t *testing.T) {
 		{"",
 			backend,
 			[]*models.Metadata{
-				{ID: "dragonfly", Icon: "https://raw.githubusercontent.com/alibaba/Dragonfly/master/docs/images/logo.png", Maintainers: []string{"Jin Zhang/taiyun.zj@alibaba-inc.com"}, Name: "Dragonfly", Source: "https://github.com/alibaba/Dragonfly", Version: "0.10.1"},
+				{ID: "dragonfly", Icon: "https://raw.githubusercontent.com/dragonflyoss/Dragonfly2/master/docs/images/logo/dragonfly-linear.png", Maintainers: []string{"chlins.zhang@gmail.com", "gaius.qi@gmail.com"}, Name: "Dragonfly", Source: "https://github.com/dragonflyoss/Dragonfly2", Version: "2.1.59"},
 				{Icon: "https://github.com/uber/kraken/blob/master/assets/kraken-logo-color.svg", ID: "kraken", Maintainers: []string{"mmpei/peimingming@corp.netease.com"}, Name: "Kraken", Source: "https://github.com/uber/kraken", Version: "0.1.3"},
 			},
 		},
@@ -270,6 +284,7 @@ func Test_convertParamInstanceToModelInstance(t *testing.T) {
 				Endpoint:       "https://example.com",
 				AuthMode:       "none",
 				AuthData:       `{"name":"harbor"}`,
+				AuthInfo:       map[string]string{"name": "harbor"},
 				Status:         "Unknown",
 				Default:        true,
 				Insecure:       true,

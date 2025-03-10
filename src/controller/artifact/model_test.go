@@ -2,13 +2,16 @@ package artifact
 
 import (
 	"encoding/json"
-	"github.com/goharbor/harbor/src/pkg/accessory/model/cosign"
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/pkg/accessory/model/cosign"
+	"github.com/goharbor/harbor/src/pkg/label/model"
 )
 
 func TestUnmarshalJSONWithACC(t *testing.T) {
-	data := []byte(`[{"accessories":[{"artifact_id":9,"creation_time":"2022-01-20T09:18:50.993Z","digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","icon":"","id":4,"size":501,"subject_artifact_id":8,"type":"signature.cosign"}],
+	data := []byte(`[{"accessories":[{"artifact_id":9,"creation_time":"2022-01-20T09:18:50.993Z","digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","icon":"","id":4,"size":501,"subject_artifact_digest":"sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c","type":"signature.cosign"}],
 	"addition_links":{"build_history":{"absolute":false,"href":"/api/v2.0/projects/source_project011642670285/repositories/redis/artifacts/sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c/additions/build_history"},
 	"vulnerabilities":{"absolute":false,"href":"/api/v2.0/projects/source_project011642670285/repositories/redis/artifacts/sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c/additions/vulnerabilities"}},
 	"digest":"sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c",
@@ -29,7 +32,7 @@ func TestUnmarshalJSONWithACC(t *testing.T) {
 }
 
 func TestUnmarshalJSONWithACCPartial(t *testing.T) {
-	data := []byte(`[{"accessories":[{"artifact_id":9,"creation_time":"2022-01-20T09:18:50.993Z","digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","icon":"","id":4,"size":501,"subject_artifact_id":8,"type":"signature.cosign"}, {"artifact_id":2, "type":"signature.cosign"}],
+	data := []byte(`[{"accessories":[{"artifact_id":9,"creation_time":"2022-01-20T09:18:50.993Z","digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","icon":"","id":4,"size":501,"subject_artifact_digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","type":"signature.cosign"}, {"artifact_id":2, "type":"signature.cosign"}],
 	"digest":"sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c","tags":[{"artifact_id":8,"id":6,"immutable":false,"name":"latest","pull_time":"2022-01-20T09:18:50.783Z","push_time":"2022-01-20T09:18:50.303Z","repository_id":5,"signed":false}],"type":"IMAGE"}]`)
 
 	var artifact []Artifact
@@ -45,7 +48,7 @@ func TestUnmarshalJSONWithACCPartial(t *testing.T) {
 }
 
 func TestUnmarshalJSONWithACCUnknownType(t *testing.T) {
-	data := []byte(`[{"accessories":[{"artifact_id":9,"creation_time":"2022-01-20T09:18:50.993Z","digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","icon":"","id":4,"size":501,"subject_artifact_id":8}],
+	data := []byte(`[{"accessories":[{"artifact_id":9,"creation_time":"2022-01-20T09:18:50.993Z","digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3","icon":"","id":4,"size":501,"subject_artifact_digest":"sha256:a7caa2636af890178a0b8c4cdbc47ced4dbdf29a1680e9e50823e85ce35b28d3"}],
 	"digest":"sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c","tags":[{"artifact_id":8,"id":6,"immutable":false,"name":"latest","pull_time":"2022-01-20T09:18:50.783Z","push_time":"2022-01-20T09:18:50.303Z","repository_id":5,"signed":false}],"type":"IMAGE"}]`)
 
 	var artifact []Artifact
@@ -101,4 +104,59 @@ func TestUnmarshalJSONWithPartial(t *testing.T) {
 	assert.Equal(t, "sha256:1234", artifact.Digest)
 	assert.Equal(t, "", artifact.Type)
 	assert.Equal(t, "application/vnd.docker.container.image.v1+json", artifact.MediaType)
+}
+
+func TestAbstractLabelNames(t *testing.T) {
+	tests := []struct {
+		name     string
+		artifact Artifact
+		want     []string
+	}{
+		{
+			name: "Nil labels",
+			artifact: Artifact{
+				Labels: nil,
+			},
+			want: []string{},
+		},
+		{
+			name: "Single label",
+			artifact: Artifact{
+				Labels: []*model.Label{
+					{Name: "label1"},
+				},
+			},
+			want: []string{"label1"},
+		},
+		{
+			name: "Multiple labels",
+			artifact: Artifact{
+				Labels: []*model.Label{
+					{Name: "label1"},
+					{Name: "label2"},
+					{Name: "label3"},
+				},
+			},
+			want: []string{"label1", "label2", "label3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.artifact.AbstractLabelNames()
+
+			// Check if lengths match
+			if len(got) != len(tt.want) {
+				t.Errorf("AbstractLabelNames() got length = %v, want length = %v", len(got), len(tt.want))
+				return
+			}
+
+			// Check if elements match
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("AbstractLabelNames() got[%d] = %v, want[%d] = %v", i, got[i], i, tt.want[i])
+				}
+			}
+		})
+	}
 }

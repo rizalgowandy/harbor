@@ -40,8 +40,6 @@ Resource  Harbor-Pages/Project-Artifact.robot
 Resource  Harbor-Pages/Project-Artifact-Elements.robot
 Resource  Harbor-Pages/Project-Config.robot
 Resource  Harbor-Pages/Project-Config-Elements.robot
-Resource  Harbor-Pages/Project-Helmcharts.robot
-Resource  Harbor-Pages/Project-Helmcharts_Elements.robot
 Resource  Harbor-Pages/Project-Copy.robot
 Resource  Harbor-Pages/Project-Copy-Elements.robot
 Resource  Harbor-Pages/Project-Tag-Retention.robot
@@ -52,9 +50,12 @@ Resource  Harbor-Pages/Replication.robot
 Resource  Harbor-Pages/Replication_Elements.robot
 Resource  Harbor-Pages/UserProfile.robot
 Resource  Harbor-Pages/UserProfile_Elements.robot
+Resource  Harbor-Pages/Administration-Project-Quotas.robot
+Resource  Harbor-Pages/Administration-Project-Quotas_Elements.robot
 Resource  Harbor-Pages/Administration-Users.robot
 Resource  Harbor-Pages/Administration-Users_Elements.robot
 Resource  Harbor-Pages/GC.robot
+Resource  Harbor-Pages/GC_Elements.robot
 Resource  Harbor-Pages/Configuration.robot
 Resource  Harbor-Pages/Configuration_Elements.robot
 Resource  Harbor-Pages/ToolKit.robot
@@ -66,7 +67,16 @@ Resource  Harbor-Pages/OIDC_Auth.robot
 Resource  Harbor-Pages/OIDC_Auth_Elements.robot
 Resource  Harbor-Pages/Robot_Account.robot
 Resource  Harbor-Pages/Robot_Account_Elements.robot
+Resource  Harbor-Pages/Logs.robot
+Resource  Harbor-Pages/Logs_Elements.robot
+Resource  Harbor-Pages/Log_Rotation.robot
+Resource  Harbor-Pages/Log_Rotation_Elements.robot
+Resource  Harbor-Pages/Job_Service_Dashboard.robot
+Resource  Harbor-Pages/Job_Service_Dashboard_Elements.robot
+Resource  Harbor-Pages/SecurityHub.robot
+Resource  Harbor-Pages/SecurityHub_Elements.robot
 Resource  Harbor-Pages/Verify.robot
+Resource  Harbor-Pages/Vulnerability_Elements.robot
 Resource  Docker-Util.robot
 Resource  CNAB_Util.robot
 Resource  Helm-Util.robot
@@ -75,6 +85,9 @@ Resource  SeleniumUtil.robot
 Resource  Nightly-Util.robot
 Resource  APITest-Util.robot
 Resource  Cosign_Util.robot
+Resource  Notation_Util.robot
+Resource  Imgpkg-Util.robot
+Resource  Webhook-Util.robot
 Resource  TestCaseBody.robot
 
 *** Keywords ***
@@ -86,6 +99,12 @@ Wait Until Element Is Visible And Enabled
 Retry Action Keyword
     [Arguments]  ${keyword}  @{param}
     Retry Keyword N Times When Error  4  ${keyword}  @{param}
+
+Retry Action Keyword And No Output
+    [Arguments]  ${keyword}  @{param}
+    ${prev_lvl}  Set Log Level  NONE
+    Retry Keyword N Times When Error  4  ${keyword}  @{param}
+    ${prev_lvl}  Set Log Level  ${prev_lvl}
 
 Retry Wait Element
     [Arguments]  ${element_xpath}
@@ -122,6 +141,10 @@ Retry Text Input
     @{param}  Create List  ${element_xpath}  ${text}
     Retry Action Keyword  Text Input  @{param}
 
+Retry Password Input
+    [Arguments]  ${element_xpath}  ${text}
+    Retry Action Keyword And No Output  Text Input  ${element_xpath}  ${text}
+
 Retry Clear Element Text
     [Arguments]  ${element_xpath}
     @{param}  Create List  ${element_xpath}
@@ -146,6 +169,7 @@ Retry Wait Until Page Contains
     [Arguments]  ${element_xpath}
     @{param}  Create List  ${element_xpath}
     Retry Action Keyword  Wait Until Page Contains  @{param}
+
 Retry Wait Until Page Does Not Contains
     [Arguments]  ${element_xpath}
     @{param}  Create List  ${element_xpath}
@@ -160,6 +184,17 @@ Retry Wait Until Page Not Contains Element
     [Arguments]  ${element_xpath}
     @{param}  Create List  ${element_xpath}
     Retry Action Keyword  Wait Until Page Does Not Contain Element  @{param}
+
+Retry Wait Element Count
+    [Arguments]  ${element_xpath}  ${expected_count}  ${times}=11
+    ${expected_count}=  Convert To Integer  ${expected_count}
+    FOR  ${n}  IN RANGE  1  ${times}
+        ${actual_count}=  Get Element Count  ${element_xpath}
+        ${result}=  Set Variable If  ${expected_count} == ${actual_count}  True  False
+        Exit For Loop If  ${result}
+        Sleep  2
+    END
+    Should Be True  ${result}
 
 Retry Select Object
     [Arguments]  ${obj_name}
@@ -208,9 +243,9 @@ Text Input
 
 Clear Field Of Characters
     [Arguments]  ${field}  ${character count}
-    [Documentation]  This keyword pushes the delete key (ascii: \8) a specified number of times in a specified field.
+    [Documentation]  This keyword pushes the BACKSPACE key a specified number of times in a specified field.
     FOR  ${index}  IN RANGE  ${character count}
-        Press Keys  ${field}  \\8
+        Press Keys  ${field}  BACKSPACE
     END
 
 Wait Unitl Command Success
@@ -219,7 +254,6 @@ Wait Unitl Command Success
         Log  Trying ${cmd}: ${n} ...  console=True
         ${rc}  ${output}=  Run And Return Rc And Output  ${cmd}
         Exit For Loop If  '${rc}'=='0'
-        Sleep  2
     END
     Log  Command Result is ${output}
     Should Be Equal As Strings  '${rc}'  '0'
@@ -235,12 +269,10 @@ Command Should be Failed
 Retry Keyword N Times When Error
     [Arguments]  ${times}  ${keyword}  @{elements}
     FOR  ${n}  IN RANGE  1  ${times}
-        Log To Console  Trying ${keyword} elements @{elements} ${n} times ...
         ${out}  Run Keyword And Ignore Error  ${keyword}  @{elements}
-        Log To Console  Return value is ${out} and ${out[0]}
         Run Keyword If  '${keyword}'=='Make Swagger Client'  Exit For Loop If  '${out[0]}'=='PASS' and '${out[1]}'=='0'
         ...  ELSE  Exit For Loop If  '${out[0]}'=='PASS'
-        Sleep  10
+        Sleep  5
     END
     Run Keyword If  '${out[0]}'=='FAIL'  Capture Page Screenshot
     Should Be Equal As Strings  '${out[0]}'  'PASS'
@@ -284,14 +316,22 @@ Retry File Should Not Exist
 
 Run Curl And Return Json
     [Arguments]  ${curl_cmd}
-    ${json_data_file}=  Set Variable  ${CURDIR}${/}cur_user_info.json
     ${rc}  ${output}=  Run And Return Rc And Output  ${curl_cmd}
     Should Be Equal As Integers  0  ${rc}
-    Create File  ${json_data_file}  ${output}
-    ${json}=    Load Json From File    ${json_data_file}
+    ${json}=  Convert String To Json  ${output}
     [Return]  ${json}
 
 Log All
     [Arguments]  ${text}
     Log To Console  ${text}
     Log  ${text}
+
+New Tab
+    Execute Javascript  window.open('')
+    Switch Window  title=undefined
+
+Click Link New Tab And Switch
+    [Arguments]  ${element_xpath}
+    Retry Link Click  ${element_xpath}
+    ${handles}=  Get Window Handles
+    Retry Action Keyword  Switch Window  ${handles}[-1]

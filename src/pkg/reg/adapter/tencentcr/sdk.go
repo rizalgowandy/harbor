@@ -1,12 +1,27 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tencentcr
 
 import (
 	"errors"
 	"strings"
 
-	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
+
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 func (a *adapter) createPrivateNamespace(namespace string) (err error) {
@@ -54,7 +69,7 @@ func (a *adapter) createRepository(namespace, repository string) (err error) {
 	repoReq.RegistryId = a.registryID
 	repoReq.NamespaceName = &namespace
 	repoReq.RepositoryName = &repository
-	var repoResp = tcr.NewDescribeRepositoriesResponse()
+	var repoResp *tcr.DescribeRepositoriesResponse
 	repoResp, err = a.tcrClient.DescribeRepositories(repoReq)
 	if err != nil {
 		return
@@ -69,7 +84,7 @@ func (a *adapter) createRepository(namespace, repository string) (err error) {
 	req.NamespaceName = &namespace
 	req.RepositoryName = &repository
 	req.RegistryId = a.registryID
-	var resp = tcr.NewCreateRepositoryResponse()
+	var resp *tcr.CreateRepositoryResponse
 	resp, err = a.tcrClient.CreateRepository(req)
 	if err != nil {
 		log.Debugf("[tencent-tcr.PrepareForPush.createRepository] error=%v", err)
@@ -124,7 +139,7 @@ func (a *adapter) isNamespaceExist(namespace string) (exist bool, err error) {
 	var req = tcr.NewDescribeNamespacesRequest()
 	req.NamespaceName = &namespace
 	req.RegistryId = a.registryID
-	var resp = tcr.NewDescribeNamespacesResponse()
+	var resp *tcr.DescribeNamespacesResponse
 	resp, err = a.tcrClient.DescribeNamespaces(req)
 	if err != nil {
 		return

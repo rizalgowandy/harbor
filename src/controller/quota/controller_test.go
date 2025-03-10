@@ -19,6 +19,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/driver"
@@ -27,8 +30,6 @@ import (
 	"github.com/goharbor/harbor/src/testing/mock"
 	quotatesting "github.com/goharbor/harbor/src/testing/pkg/quota"
 	drivertesting "github.com/goharbor/harbor/src/testing/pkg/quota/driver"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/suite"
 )
 
 type ControllerTestSuite struct {
@@ -140,6 +141,19 @@ func (suite *ControllerTestSuite) TestRequestFunctionFailed() {
 	resources := types.ResourceList{types.ResourceStorage: 100}
 
 	suite.Error(suite.ctl.Request(ctx, suite.reference, referenceID, resources, func() error { return fmt.Errorf("error") }))
+}
+
+func (suite *ControllerTestSuite) TestRequestResourceIsZero() {
+	suite.PrepareForUpdate(suite.quota, nil)
+
+	ctx := orm.NewContext(context.TODO(), &ormtesting.FakeOrmer{})
+	referenceID := uuid.New().String()
+	f := func() error {
+		return nil
+	}
+	res := types.ResourceList{types.ResourceStorage: 0}
+	err := suite.ctl.Request(ctx, suite.reference, referenceID, res, f)
+	suite.Nil(err)
 }
 
 func TestControllerTestSuite(t *testing.T) {

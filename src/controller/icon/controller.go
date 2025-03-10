@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"image"
+
 	// import the gif format
 	_ "image/gif"
 	// import the jpeg format
@@ -28,12 +29,14 @@ import (
 	"os"
 	"sync"
 
+	"github.com/nfnt/resize"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/icon"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/registry"
-	"github.com/nfnt/resize"
 )
 
 var (
@@ -53,6 +56,22 @@ var (
 		icon.DigestOfIconAccCosign: {
 			path:   "./icons/cosign.png",
 			resize: false,
+		},
+		icon.DigestOfIconAccNotation: {
+			path:   "./icons/notation.png",
+			resize: false,
+		},
+		icon.DigestOfIconAccNydus: {
+			path:   "./icons/nydus.png",
+			resize: false,
+		},
+		icon.DigestOfIconWASM: {
+			path:   "./icons/wasm.png",
+			resize: true,
+		},
+		icon.DigestOfIconAccSBOM: {
+			path:   "./icons/sbom.png",
+			resize: true,
 		},
 		icon.DigestOfIconDefault: {
 			path:   "./icons/default.png",
@@ -83,7 +102,7 @@ type Controller interface {
 // NewController creates a new instance of the icon controller
 func NewController() Controller {
 	return &controller{
-		artMgr: artifact.Mgr,
+		artMgr: pkg.ArtifactMgr,
 		regCli: registry.Cli,
 		cache:  sync.Map{},
 	}
@@ -124,7 +143,7 @@ func (c *controller) Get(ctx context.Context, digest string) (*Icon, error) {
 		}
 		if len(artifacts) == 0 {
 			return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-				WithMessage("the icon %s not found", digest)
+				WithMessagef("the icon %s not found", digest)
 		}
 		_, iconFile, err = c.regCli.PullBlob(artifacts[0].RepositoryName, digest)
 		if err != nil {
